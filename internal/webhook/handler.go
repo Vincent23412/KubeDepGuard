@@ -74,19 +74,28 @@ func (h *Handler) validate(ctx context.Context, req *admissionv1.AdmissionReques
 			}
 			for i := range services.Items {
 				svc := &services.Items[i]
-				if dependency.ModeFor(svc) == dependency.ModeEnforce && !dependency.ServiceHasMatchingPod(svc, remaining) {
-					violations = append(violations, dependency.EmptyServiceSelector(svc, remaining)...)
-					reject = true
+				if dependency.ModeFor(svc) == dependency.ModeEnforce {
+					for _, rule := range dependency.DefaultRegistry.ServiceConditionalRules() {
+						if !rule.HasMatch(svc, remaining) {
+							violations = append(violations, rule.Validate(svc, remaining)...)
+							reject = true
+						}
+					}
 				}
 			}
 		} else if err := json.Unmarshal(req.Object.Raw, &pod); err != nil {
 			return deny(fmt.Sprintf("decode Pod: %v", err))
 		}
 		if req.Operation != admissionv1.Delete && dependency.ModeFor(&pod) != dependency.ModeDisabled {
-			violations = append(violations, dependency.MissingConfigMaps(&pod, func(name string) bool {
-				_, err := h.client.CoreV1().ConfigMaps(pod.Namespace).Get(ctx, name, metav1.GetOptions{})
-				return err == nil
-			})...)
+			for _, rule := range dependency.DefaultRegistry.PodDirectReferenceRules() {
+				violations = append(violations, rule.Validate(&pod, func(kind, name string) bool {
+					if kind != "ConfigMap" {
+						return false
+					}
+					_, err := h.client.CoreV1().ConfigMaps(pod.Namespace).Get(ctx, name, metav1.GetOptions{})
+					return err == nil
+				})...)
+			}
 			reject = len(violations) > 0 && dependency.ModeFor(&pod) == dependency.ModeEnforce
 		}
 	case "services":
@@ -106,7 +115,9 @@ func (h *Handler) validate(ctx context.Context, req *admissionv1.AdmissionReques
 			for i := range list.Items {
 				pods = append(pods, &list.Items[i])
 			}
-			violations = append(violations, dependency.EmptyServiceSelector(&service, pods)...)
+			for _, rule := range dependency.DefaultRegistry.ServiceConditionalRules() {
+				violations = append(violations, rule.Validate(&service, pods)...)
+			}
 			reject = len(violations) > 0 && dependency.ModeFor(&service) == dependency.ModeEnforce
 		}
 	case "configmaps":
@@ -122,10 +133,15 @@ func (h *Handler) validate(ctx context.Context, req *admissionv1.AdmissionReques
 			if dependency.ModeFor(pod) != dependency.ModeEnforce {
 				continue
 			}
-			for _, ref := range dependency.ConfigMapReferences(pod) {
-				if ref == req.Name {
-					violations = append(violations, dependency.Violation{"ReferencedConfigMapDeletion", req.Namespace + "/" + req.Name, fmt.Sprintf("is still referenced by enforce Pod %s", pod.Name)})
-					reject = true
+			for _, rule := range dependency.DefaultRegistry.PodDirectReferenceRules() {
+				if rule.TargetKind() != "ConfigMap" {
+					continue
+				}
+				for _, ref := range rule.References(pod) {
+					if ref == req.Name {
+						violations = append(violations, dependency.Violation{"ReferencedConfigMapDeletion", req.Namespace + "/" + req.Name, fmt.Sprintf("is still referenced by enforce Pod %s", pod.Name)})
+						reject = true
+					}
 				}
 			}
 		}

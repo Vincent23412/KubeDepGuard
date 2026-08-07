@@ -31,7 +31,11 @@ type Controller struct {
 
 func NewWithInformers(pods coreinformers.PodInformer, services coreinformers.ServiceInformer, configMaps coreinformers.ConfigMapInformer, endpointSlices discoveryinformers.EndpointSliceInformer, recorder record.EventRecorder, log *slog.Logger) *Controller {
 	c := &Controller{pods: pods, services: services, configMaps: configMaps, endpointSlices: endpointSlices, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()), recorder: recorder, log: log}
-	pods.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllServices() }, UpdateFunc: func(any, any) { c.enqueueAllServices() }, DeleteFunc: func(any) { c.enqueueAllServices() }})
+	pods.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(obj any) { c.enqueue("pod", obj); c.enqueueAllServices() },
+		UpdateFunc: func(_, obj any) { c.enqueue("pod", obj); c.enqueueAllServices() },
+		DeleteFunc: func(any) { c.enqueueAllServices() },
+	})
 	services.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueue("service", obj) }, UpdateFunc: func(_, obj any) { c.enqueue("service", obj) }, DeleteFunc: func(obj any) { c.enqueue("service", obj) }})
 	configMaps.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueueAffectedPods(obj) }, UpdateFunc: func(_, obj any) { c.enqueueAffectedPods(obj) }, DeleteFunc: func(obj any) { c.enqueueAffectedPods(obj) }})
 	endpointSlices.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueueEndpointService(obj) }, UpdateFunc: func(_, obj any) { c.enqueueEndpointService(obj) }, DeleteFunc: func(obj any) { c.enqueueEndpointService(obj) }})
@@ -95,8 +99,16 @@ func (c *Controller) reconcile(key string) error {
 		if dependency.ModeFor(pod) == dependency.ModeDisabled {
 			return nil
 		}
-		for _, v := range dependency.MissingConfigMaps(pod, func(cm string) bool { _, err := c.configMaps.Lister().ConfigMaps(namespace).Get(cm); return err == nil }) {
-			c.warn(pod, v)
+		for _, rule := range dependency.DefaultRegistry.PodDirectReferenceRules() {
+			for _, v := range rule.Validate(pod, func(kind, name string) bool {
+				if kind != "ConfigMap" {
+					return false
+				}
+				_, err := c.configMaps.Lister().ConfigMaps(namespace).Get(name)
+				return err == nil
+			}) {
+				c.warn(pod, v)
+			}
 		}
 	case "service":
 		svc, err := c.services.Lister().Services(namespace).Get(name)
@@ -109,8 +121,10 @@ func (c *Controller) reconcile(key string) error {
 		podList, _ := c.pods.Lister().Pods(namespace).List(labels.Everything())
 		pods := make([]*corev1.Pod, len(podList))
 		copy(pods, podList)
-		for _, v := range dependency.EmptyServiceSelector(svc, pods) {
-			c.warn(svc, v)
+		for _, rule := range dependency.DefaultRegistry.ServiceConditionalRules() {
+			for _, v := range rule.Validate(svc, pods) {
+				c.warn(svc, v)
+			}
 		}
 		slices, _ := c.endpointSlices.Lister().EndpointSlices(namespace).List(labels.Everything())
 		if len(svc.Spec.Selector) > 0 && !hasReadyEndpoint(svc, slices) {
@@ -155,10 +169,15 @@ func (c *Controller) enqueueAffectedPods(obj any) {
 	}
 	pods, _ := c.pods.Lister().Pods(cm.Namespace).List(labels.Everything())
 	for _, pod := range pods {
-		for _, ref := range dependency.ConfigMapReferences(pod) {
-			if ref == cm.Name {
-				c.enqueue("pod", pod)
-				break
+		for _, rule := range dependency.DefaultRegistry.PodDirectReferenceRules() {
+			if rule.TargetKind() != "ConfigMap" {
+				continue
+			}
+			for _, ref := range rule.References(pod) {
+				if ref == cm.Name {
+					c.enqueue("pod", pod)
+					break
+				}
 			}
 		}
 	}
