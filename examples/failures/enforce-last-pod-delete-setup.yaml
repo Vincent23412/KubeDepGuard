@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: enforce-service-target
+  labels:
+    app: protected-api
+spec:
+  containers:
+    - name: app
+      image: nginx:stable
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: enforce-service-target
+  annotations:
+    dependency.kubedepguard.io/mode: enforce
+spec:
+  selector:
+    # enforce Service 唯一匹配的 Pod 是 enforce-service-target。
+    # 刪除該 Pod 後 selector 將無任何目標，因此 Webhook 會拒絕 delete。
+    app: protected-api
+  ports:
+    - port: 80
+      targetPort: 80

@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: warn-pod-missing-configmap
+  annotations:
+    dependency.kubedepguard.io/mode: warn
+spec:
+  containers:
+    - name: app
+      image: nginx:stable
+      volumeMounts:
+        - name: settings
+          mountPath: /etc/settings
+  volumes:
+    - name: settings
+      configMap:
+        # 錯誤：此 ConfigMap 不存在，觸發 MissingConfigMap。
+        # mode=warn，Webhook 會放行；Monitor 後續建立 Warning Event。
+        name: does-not-exist

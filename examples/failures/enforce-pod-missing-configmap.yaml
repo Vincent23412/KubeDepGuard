@@ -10,4 +10,6 @@ spec:
       image: nginx:stable
       envFrom:
         - configMapRef:
+            # 錯誤：此 ConfigMap 不存在，觸發 MissingConfigMap。
+            # mode=enforce，因此 Admission Webhook 會拒絕整個 Pod 建立請求。
             name: does-not-exist

@@ -47,7 +47,7 @@ make deploy
 Try the rejecting path:
 
 ```sh
-kubectl apply -f examples/enforce-pod-missing-configmap.yaml
+kubectl apply -f examples/failures/enforce-pod-missing-configmap.yaml
 ```
 
 The request should be rejected because the referenced ConfigMap is absent. Change the annotation to `warn` to allow it, then inspect the runtime warning:
@@ -57,6 +57,8 @@ kubectl get events --sort-by=.lastTimestamp
 ```
 
 Remove the installation with `make undeploy`.
+
+More admission and runtime failure cases are in [examples/scenarios/README.md](examples/scenarios/README.md).
 
 ## Current MVP boundaries
 

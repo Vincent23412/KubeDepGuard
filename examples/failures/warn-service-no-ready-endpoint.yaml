@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: unready-service-target
+  labels:
+    app: unready-api
+spec:
+  containers:
+    - name: app
+      image: nginx:stable
+      readinessProbe:
+        exec:
+          # 錯誤：probe 永遠失敗，因此 Pod 不會成為 Ready Endpoint。
+          # mode=warn 的 Service 仍會建立，但 Monitor 會產生 NoReadyEndpoint Warning。
+          command: ["sh", "-c", "exit 1"]
+        initialDelaySeconds: 1
+        periodSeconds: 2
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: warn-service-no-ready-endpoint
+  annotations:
+    dependency.kubedepguard.io/mode: warn
+spec:
+  selector:
+    app: unready-api
+  ports:
+    - port: 80
+      targetPort: 80

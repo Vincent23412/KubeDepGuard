@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: enforce-service-empty-selector
+  annotations:
+    dependency.kubedepguard.io/mode: enforce
+spec:
+  selector:
+    # 錯誤：叢集中沒有帶有 app=does-not-exist 的 Pod。
+    # mode=enforce，觸發 EmptyServiceSelector 後會被 Admission Webhook 拒絕。
+    app: does-not-exist
+  ports:
+    - port: 80
+      targetPort: 8080

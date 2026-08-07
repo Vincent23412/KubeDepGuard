@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: protected-config
+data:
+  message: keep-me
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: enforce-configmap-consumer
+  annotations:
+    dependency.kubedepguard.io/mode: enforce
+spec:
+  containers:
+    - name: app
+      image: nginx:stable
+      env:
+        - name: MESSAGE
+          valueFrom:
+            configMapKeyRef:
+              # 刪除 protected-config 時會出錯：這個 enforce Pod 仍引用它。
+              # Webhook 會拒絕 `kubectl delete configmap protected-config`。
+              name: protected-config
+              key: message
