@@ -18,7 +18,18 @@ spec:
         - name: monitor
           image: kube-dep-guard-monitor:dev
           imagePullPolicy: IfNotPresent
-          args: ["--workers=2"]
+          args: ["--workers=2", "--health-addr=:8080"]
+          ports:
+            - name: health
+              containerPort: 8080
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: health
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

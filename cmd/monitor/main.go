@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -19,6 +20,7 @@ import (
 
 func main() {
 	workers := flag.Int("workers", 2, "number of reconcile workers")
+	healthAddr := flag.String("health-addr", ":8080", "HTTP health endpoint listen address")
 	flag.Parse()
 	log := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	client, err := kube.InClusterClient()
@@ -35,10 +37,36 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	factory.Start(ctx.Done())
+	healthServer := newHealthServer(*healthAddr, controller.Ready())
+	go func() {
+		if err := healthServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Error("health server stopped", "error", err)
+			stop()
+		}
+	}()
+	go func() { <-ctx.Done(); _ = healthServer.Shutdown(context.Background()) }()
 	if err := controller.Run(ctx, *workers); err != nil {
 		log.Error("monitor stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func scheme() *runtime.Scheme { s := runtime.NewScheme(); _ = corev1.AddToScheme(s); return s }
+func scheme() *runtime.Scheme {
+	s := runtime.NewScheme()
+	_ = corev1.AddToScheme(s)
+	return s
+}
+
+func newHealthServer(addr string, ready <-chan struct{}) *http.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+		select {
+		case <-ready:
+			w.WriteHeader(http.StatusOK)
+		default:
+			http.Error(w, "informer cache is not synchronized", http.StatusServiceUnavailable)
+		}
+	})
+	return &http.Server{Addr: addr, Handler: mux}
+}

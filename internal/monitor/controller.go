@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/vincent/KubeDepGuard/internal/dependency"
@@ -27,10 +28,12 @@ type Controller struct {
 	queue          workqueue.TypedRateLimitingInterface[string]
 	recorder       record.EventRecorder
 	log            *slog.Logger
+	ready          chan struct{}
+	readyOnce      sync.Once
 }
 
 func NewWithInformers(pods coreinformers.PodInformer, services coreinformers.ServiceInformer, configMaps coreinformers.ConfigMapInformer, endpointSlices discoveryinformers.EndpointSliceInformer, recorder record.EventRecorder, log *slog.Logger) *Controller {
-	c := &Controller{pods: pods, services: services, configMaps: configMaps, endpointSlices: endpointSlices, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()), recorder: recorder, log: log}
+	c := &Controller{pods: pods, services: services, configMaps: configMaps, endpointSlices: endpointSlices, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()), recorder: recorder, log: log, ready: make(chan struct{})}
 	pods.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    func(obj any) { c.enqueue("pod", obj); c.enqueueAllServices() },
 		UpdateFunc: func(_, obj any) { c.enqueue("pod", obj); c.enqueueAllServices() },
@@ -42,11 +45,15 @@ func NewWithInformers(pods coreinformers.PodInformer, services coreinformers.Ser
 	return c
 }
 
+// Ready closes after all Informer caches have synchronized.
+func (c *Controller) Ready() <-chan struct{} { return c.ready }
+
 func (c *Controller) Run(ctx context.Context, workers int) error {
 	defer c.queue.ShutDown()
 	if !cache.WaitForCacheSync(ctx.Done(), c.pods.Informer().HasSynced, c.services.Informer().HasSynced, c.configMaps.Informer().HasSynced, c.endpointSlices.Informer().HasSynced) {
 		return fmt.Errorf("informer cache did not synchronize")
 	}
+	c.readyOnce.Do(func() { close(c.ready) })
 	c.fullReconcile()
 	for i := 0; i < workers; i++ {
 		go func() {

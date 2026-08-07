@@ -18,6 +18,16 @@ The shared code is intentionally small:
 
 The deployment layout follows the same boundary: `deploy/webhook`, `deploy/monitor`, and `deploy/shared`.
 
+The Webhook exposes these HTTPS paths:
+
+| Path | Purpose |
+| --- | --- |
+| `/validate/dependencies` | Kubernetes API Server AdmissionReview endpoint |
+| `/healthz` | process health check |
+| `/readyz` | readiness check after Informer cache synchronization |
+
+The Monitor exposes `/healthz` and `/readyz` over its internal HTTP port `8080`.
+
 ## Policy
 
 Set `dependency.kubedepguard.io/mode` on a Pod or Service:
@@ -63,5 +73,6 @@ More admission and runtime failure cases are in [examples/scenarios/README.md](e
 ## Current MVP boundaries
 
 - `failurePolicy: Ignore` is intentional: the API Server remains available when the webhook is unavailable, while the Runtime Monitor detects invalid observed state afterward.
+- The Webhook and Monitor both use SharedInformer caches. The Webhook waits for its Pod, ConfigMap, and Service caches to synchronize before its HTTPS listener starts.
 - The implementation excludes `kube-dep-guard-system` and `kube-system` from interception to avoid blocking core components or the webhook itself. The Webhook can only read its required resources; only the Monitor has Event write permission.
 - Informer caches and queues are derived state only. There is no Pending State, leader election, multi-replica coordination, or auto-remediation yet.
