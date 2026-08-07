@@ -1,14 +1,19 @@
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/vincent/KubeDepGuard/internal/kube"
 	"github.com/vincent/KubeDepGuard/internal/webhook"
+	"k8s.io/client-go/informers"
+	"k8s.io/client-go/tools/cache"
 )
 
 func main() {
@@ -22,7 +27,22 @@ func main() {
 		log.Error("create client", "error", err)
 		os.Exit(1)
 	}
-	server := &http.Server{Addr: *addr, Handler: webhook.New(client, log), TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	factory := informers.NewSharedInformerFactory(client, 0)
+	podInformer := factory.Core().V1().Pods()
+	configMapInformer := factory.Core().V1().ConfigMaps()
+	serviceInformer := factory.Core().V1().Services()
+	factory.Start(ctx.Done())
+	if !cache.WaitForCacheSync(ctx.Done(), podInformer.Informer().HasSynced, configMapInformer.Informer().HasSynced, serviceInformer.Informer().HasSynced) {
+		log.Error("informer cache did not synchronize")
+		os.Exit(1)
+	}
+	mux := http.NewServeMux()
+	mux.Handle(webhook.ValidationPath, webhook.New(podInformer.Lister(), configMapInformer.Lister(), serviceInformer.Lister(), log))
+	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	server := &http.Server{Addr: *addr, Handler: mux, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}}
 	log.Info("starting admission webhook", "addr", *addr)
 	if err := server.ListenAndServeTLS(*cert, *key); err != nil {
 		log.Error("webhook stopped", "error", err)

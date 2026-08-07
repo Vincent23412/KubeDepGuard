@@ -27,8 +27,10 @@ spec:
               mountPath: /tls
               readOnly: true
           readinessProbe:
-            tcpSocket:
+            httpGet:
+              path: /readyz
               port: https
+              scheme: HTTPS
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

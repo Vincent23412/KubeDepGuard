@@ -1,7 +1,6 @@
 package webhook
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,16 +11,21 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
+	"k8s.io/apimachinery/pkg/labels"
+	corelisters "k8s.io/client-go/listers/core/v1"
 )
 
+const ValidationPath = "/validate/dependencies"
+
 type Handler struct {
-	client kubernetes.Interface
-	log    *slog.Logger
+	pods       corelisters.PodLister
+	configMaps corelisters.ConfigMapLister
+	services   corelisters.ServiceLister
+	log        *slog.Logger
 }
 
-func New(client kubernetes.Interface, log *slog.Logger) *Handler {
-	return &Handler{client: client, log: log}
+func New(pods corelisters.PodLister, configMaps corelisters.ConfigMapLister, services corelisters.ServiceLister, log *slog.Logger) *Handler {
+	return &Handler{pods: pods, configMaps: configMaps, services: services, log: log}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -36,13 +40,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid AdmissionReview", http.StatusBadRequest)
 		return
 	}
-	response := h.validate(r.Context(), review.Request)
+	response := h.validate(review.Request)
 	response.UID = review.Request.UID
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(admissionv1.AdmissionReview{TypeMeta: metav1.TypeMeta{APIVersion: "admission.k8s.io/v1", Kind: "AdmissionReview"}, Response: response})
 }
 
-func (h *Handler) validate(ctx context.Context, req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
+func (h *Handler) validate(req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
 	allow := func() *admissionv1.AdmissionResponse { return &admissionv1.AdmissionResponse{Allowed: true} }
 	if req.Namespace == "kube-dep-guard-system" {
 		return allow()
@@ -53,27 +57,26 @@ func (h *Handler) validate(ctx context.Context, req *admissionv1.AdmissionReques
 	case "pods":
 		var pod corev1.Pod
 		if req.Operation == admissionv1.Delete {
-			current, err := h.client.CoreV1().Pods(req.Namespace).Get(ctx, req.Name, metav1.GetOptions{})
+			current, err := h.pods.Pods(req.Namespace).Get(req.Name)
 			if err != nil {
 				return allow()
 			}
 			pod = *current
-			services, err := h.client.CoreV1().Services(pod.Namespace).List(ctx, metav1.ListOptions{})
+			services, err := h.services.Services(pod.Namespace).List(labels.Everything())
 			if err != nil {
 				return deny(fmt.Sprintf("list Services: %v", err))
 			}
-			pods, err := h.client.CoreV1().Pods(pod.Namespace).List(ctx, metav1.ListOptions{})
+			pods, err := h.pods.Pods(pod.Namespace).List(labels.Everything())
 			if err != nil {
 				return deny(fmt.Sprintf("list Pods: %v", err))
 			}
-			remaining := make([]*corev1.Pod, 0, len(pods.Items))
-			for i := range pods.Items {
-				if pods.Items[i].Name != pod.Name {
-					remaining = append(remaining, &pods.Items[i])
+			remaining := make([]*corev1.Pod, 0, len(pods))
+			for _, candidate := range pods {
+				if candidate.Name != pod.Name {
+					remaining = append(remaining, candidate)
 				}
 			}
-			for i := range services.Items {
-				svc := &services.Items[i]
+			for _, svc := range services {
 				if dependency.ModeFor(svc) == dependency.ModeEnforce {
 					for _, rule := range dependency.DefaultRegistry.ServiceConditionalRules() {
 						if !rule.HasMatch(svc, remaining) {
@@ -92,7 +95,7 @@ func (h *Handler) validate(ctx context.Context, req *admissionv1.AdmissionReques
 					if kind != "ConfigMap" {
 						return false
 					}
-					_, err := h.client.CoreV1().ConfigMaps(pod.Namespace).Get(ctx, name, metav1.GetOptions{})
+					_, err := h.configMaps.ConfigMaps(pod.Namespace).Get(name)
 					return err == nil
 				})...)
 			}
@@ -107,13 +110,9 @@ func (h *Handler) validate(ctx context.Context, req *admissionv1.AdmissionReques
 			return deny(fmt.Sprintf("decode Service: %v", err))
 		}
 		if dependency.ModeFor(&service) != dependency.ModeDisabled {
-			list, err := h.client.CoreV1().Pods(service.Namespace).List(ctx, metav1.ListOptions{})
+			pods, err := h.pods.Pods(service.Namespace).List(labels.Everything())
 			if err != nil {
 				return deny(fmt.Sprintf("list Pods: %v", err))
-			}
-			pods := make([]*corev1.Pod, 0, len(list.Items))
-			for i := range list.Items {
-				pods = append(pods, &list.Items[i])
 			}
 			for _, rule := range dependency.DefaultRegistry.ServiceConditionalRules() {
 				violations = append(violations, rule.Validate(&service, pods)...)
@@ -124,12 +123,11 @@ func (h *Handler) validate(ctx context.Context, req *admissionv1.AdmissionReques
 		if req.Operation != admissionv1.Delete {
 			break
 		}
-		pods, err := h.client.CoreV1().Pods(req.Namespace).List(ctx, metav1.ListOptions{})
+		pods, err := h.pods.Pods(req.Namespace).List(labels.Everything())
 		if err != nil {
 			return deny(fmt.Sprintf("list Pods: %v", err))
 		}
-		for i := range pods.Items {
-			pod := &pods.Items[i]
+		for _, pod := range pods {
 			if dependency.ModeFor(pod) != dependency.ModeEnforce {
 				continue
 			}
