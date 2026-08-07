@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kube-dep-guard-webhook
+  namespace: kube-dep-guard-system
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/component: webhook
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: webhook
+    spec:
+      serviceAccountName: kube-dep-guard-webhook
+      containers:
+        - name: webhook
+          image: kube-dep-guard-webhook:dev
+          imagePullPolicy: IfNotPresent
+          args: ["--addr=:8443"]
+          ports:
+            - name: https
+              containerPort: 8443
+          volumeMounts:
+            - name: tls
+              mountPath: /tls
+              readOnly: true
+          readinessProbe:
+            tcpSocket:
+              port: https
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: tls
+          secret:
+            secretName: kube-dep-guard-webhook-tls
