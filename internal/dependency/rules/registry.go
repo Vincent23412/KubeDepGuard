@@ -25,11 +25,25 @@ type ServiceConditionalRule interface {
 type Registry struct {
 	direct      []DirectRule
 	conditional []ServiceConditionalRule
+	admission   []AdmissionRule
 }
 
 func (r *Registry) DirectReferenceRules() []DirectRule { return append([]DirectRule(nil), r.direct...) }
 func (r *Registry) ServiceConditionalRules() []ServiceConditionalRule {
 	return append([]ServiceConditionalRule(nil), r.conditional...)
 }
+func (r *Registry) AdmissionRules() []AdmissionRule {
+	return append([]AdmissionRule(nil), r.admission...)
+}
 
-var DefaultRegistry = &Registry{direct: []DirectRule{NewPodConfigMapRule()}, conditional: []ServiceConditionalRule{NewServicePodRule()}}
+func NewDefaultRegistry() *Registry {
+	podConfigMap := NewPodConfigMapRule()
+	servicePod := NewServicePodRule()
+	return &Registry{
+		direct:      []DirectRule{podConfigMap},
+		conditional: []ServiceConditionalRule{servicePod},
+		admission:   []AdmissionRule{podConfigMap, servicePod},
+	}
+}
+
+var DefaultRegistry = NewDefaultRegistry()

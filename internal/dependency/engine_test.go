@@ -3,6 +3,7 @@ package dependency_test
 import (
 	"testing"
 
+	"github.com/vincent/KubeDepGuard/internal/dependency"
 	"github.com/vincent/KubeDepGuard/internal/dependency/catalog"
 	ref "github.com/vincent/KubeDepGuard/internal/dependency/reference"
 	serviceRef "github.com/vincent/KubeDepGuard/internal/dependency/reference/service"
@@ -45,12 +46,45 @@ func (l testPodLister) List(string) ([]*corev1.Pod, error) { return l.pods, nil 
 
 var _ resolver.PodLister = testPodLister{}
 
+type testQuery struct{}
+
+func (testQuery) Exists(resolver.Target) (bool, error)           { return false, nil }
+func (testQuery) GetPod(string, string) (*corev1.Pod, error)     { return nil, nil }
+func (testQuery) ListPods(string) ([]*corev1.Pod, error)         { return nil, nil }
+func (testQuery) ListServices(string) ([]*corev1.Service, error) { return nil, nil }
+
+var _ rules.Query = testQuery{}
+
 func TestDefaultRegistryCategories(t *testing.T) {
 	if got := len(rules.DefaultRegistry.DirectReferenceRules()); got != 1 {
 		t.Fatalf("direct rule count = %d, want 1", got)
 	}
 	if got := len(rules.DefaultRegistry.ServiceConditionalRules()); got != 1 {
 		t.Fatalf("conditional rule count = %d, want 1", got)
+	}
+}
+
+func TestEvaluatorRejectsEnforcePodWithMissingConfigMap(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "api",
+			Namespace:   "test",
+			Annotations: map[string]string{dependency.PolicyAnnotation: string(dependency.ModeEnforce)},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name: "app",
+			EnvFrom: []corev1.EnvFromSource{{
+				ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "missing"}},
+			}},
+		}}},
+	}
+	evaluator := rules.NewEvaluator(testQuery{}, rules.DefaultRegistry.AdmissionRules())
+	result, err := evaluator.Evaluate(rules.Request{Resource: "pods", Operation: rules.Create, Namespace: pod.Namespace, Name: pod.Name, Object: pod})
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if !result.Reject || len(result.Violations) != 1 {
+		t.Fatalf("result = %#v, want one rejected violation", result)
 	}
 }
 

@@ -7,30 +7,24 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/vincent/KubeDepGuard/internal/dependency"
-	"github.com/vincent/KubeDepGuard/internal/dependency/catalog"
-	serviceRef "github.com/vincent/KubeDepGuard/internal/dependency/reference/service"
 	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
 	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	corelisters "k8s.io/client-go/listers/core/v1"
 )
 
 const ValidationPath = "/validate/dependencies"
 
 type Handler struct {
-	pods      corelisters.PodLister
-	resolver  *resolver.ListerResolver
-	podLister resolver.PodLister
-	services  corelisters.ServiceLister
+	evaluator *rules.Evaluator
 	log       *slog.Logger
 }
 
 func New(pods corelisters.PodLister, configMaps corelisters.ConfigMapLister, services corelisters.ServiceLister, log *slog.Logger) *Handler {
-	return &Handler{pods: pods, resolver: resolver.NewListerResolver(configMaps), podLister: resolver.NewInformerPodLister(pods), services: services, log: log}
+	query := resolver.NewInformerQuery(pods, configMaps, services)
+	return &Handler{evaluator: rules.NewEvaluator(query, rules.DefaultRegistry.AdmissionRules()), log: log}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -56,123 +50,46 @@ func (h *Handler) validate(req *admissionv1.AdmissionRequest) *admissionv1.Admis
 	if req.Namespace == "kube-dep-guard-system" {
 		return allow()
 	}
-	var violations []dependency.Violation
-	reject := false
-	switch req.Resource.Resource {
-	case "pods":
-		var pod corev1.Pod
-		if req.Operation == admissionv1.Delete {
-			current, err := h.pods.Pods(req.Namespace).Get(req.Name)
-			if err != nil {
-				return allow()
-			}
-			pod = *current
-			services, err := h.services.Services(pod.Namespace).List(labels.Everything())
-			if err != nil {
-				return deny(fmt.Sprintf("list Services: %v", err))
-			}
-			pods, err := h.pods.Pods(pod.Namespace).List(labels.Everything())
-			if err != nil {
-				return deny(fmt.Sprintf("list Pods: %v", err))
-			}
-			remaining := make([]*corev1.Pod, 0, len(pods))
-			for _, candidate := range pods {
-				if candidate.Name != pod.Name {
-					remaining = append(remaining, candidate)
-				}
-			}
-			for _, svc := range services {
-				if dependency.ModeFor(svc) == dependency.ModeEnforce {
-					selector, err := serviceRef.NewSelectorExtractor().Extract(svc)
-					if err != nil {
-						return deny(fmt.Sprintf("extract Service selector: %v", err))
-					}
-					for _, rule := range rules.DefaultRegistry.ServiceConditionalRules() {
-						found, err := rule.Validate(svc, selector, staticPodLister{pods: remaining})
-						if err != nil {
-							return deny(fmt.Sprintf("validate Service selector: %v", err))
-						}
-						if len(found) > 0 {
-							violations = append(violations, found...)
-							reject = true
-						}
-					}
-				}
-			}
-		} else if err := json.Unmarshal(req.Object.Raw, &pod); err != nil {
-			return deny(fmt.Sprintf("decode Pod: %v", err))
-		}
-		if req.Operation != admissionv1.Delete && dependency.ModeFor(&pod) != dependency.ModeDisabled {
-			references, err := catalog.DefaultReferenceRegistry.Extract("Pod", &pod)
-			if err != nil {
-				return deny(fmt.Sprintf("extract Pod references: %v", err))
-			}
-			for _, rule := range rules.DefaultRegistry.DirectReferenceRules() {
-				violations = append(violations, rule.Validate(&pod, references, h.resolver)...)
-			}
-			reject = len(violations) > 0 && dependency.ModeFor(&pod) == dependency.ModeEnforce
-		}
-	case "services":
-		if req.Operation == admissionv1.Delete {
-			return allow()
-		}
-		var service corev1.Service
-		if err := json.Unmarshal(req.Object.Raw, &service); err != nil {
-			return deny(fmt.Sprintf("decode Service: %v", err))
-		}
-		if dependency.ModeFor(&service) != dependency.ModeDisabled {
-			selector, err := serviceRef.NewSelectorExtractor().Extract(&service)
-			if err != nil {
-				return deny(fmt.Sprintf("extract Service selector: %v", err))
-			}
-			for _, rule := range rules.DefaultRegistry.ServiceConditionalRules() {
-				found, err := rule.Validate(&service, selector, h.podLister)
-				if err != nil {
-					return deny(fmt.Sprintf("validate Service selector: %v", err))
-				}
-				violations = append(violations, found...)
-			}
-			reject = len(violations) > 0 && dependency.ModeFor(&service) == dependency.ModeEnforce
-		}
-	case "configmaps":
-		if req.Operation != admissionv1.Delete {
-			break
-		}
-		target := resolver.Target{Kind: "ConfigMap", Namespace: req.Namespace, Name: req.Name}
-		pods, err := h.pods.Pods(req.Namespace).List(labels.Everything())
-		if err != nil {
-			return deny(fmt.Sprintf("list Pods: %v", err))
-		}
-		for _, pod := range pods {
-			if dependency.ModeFor(pod) != dependency.ModeEnforce {
-				continue
-			}
-			references, err := catalog.DefaultReferenceRegistry.Extract("Pod", pod)
-			if err != nil {
-				return deny(fmt.Sprintf("extract Pod references: %v", err))
-			}
-			for _, rule := range rules.DefaultRegistry.DirectReferenceRules() {
-				found := rule.ValidateTargetDeletion(pod, references, target)
-				violations = append(violations, found...)
-				reject = reject || len(found) > 0
-			}
-		}
+	request, err := newRuleRequest(req)
+	if err != nil {
+		return deny(err.Error())
 	}
-	for _, violation := range violations {
-		if !reject {
+	result, err := h.evaluator.Evaluate(request)
+	if err != nil {
+		return deny(fmt.Sprintf("evaluate dependency rules: %v", err))
+	}
+	for _, violation := range result.Violations {
+		if !result.Reject {
 			h.log.Warn("dependency violation allowed by warn policy", "rule", violation.Rule, "resource", violation.Resource)
 		}
 	}
-	// The resource mode is evaluated per object. An enforce object rejects all violations.
-	if len(violations) > 0 && reject {
-		return deny(violations[0].Message)
+	if len(result.Violations) > 0 && result.Reject {
+		return deny(result.Violations[0].Message)
 	}
 	return allow()
 }
 
-type staticPodLister struct{ pods []*corev1.Pod }
-
-func (l staticPodLister) List(string) ([]*corev1.Pod, error) { return l.pods, nil }
+func newRuleRequest(req *admissionv1.AdmissionRequest) (rules.Request, error) {
+	request := rules.Request{Resource: req.Resource.Resource, Operation: rules.Operation(req.Operation), Namespace: req.Namespace, Name: req.Name}
+	if req.Operation == admissionv1.Delete {
+		return request, nil
+	}
+	switch req.Resource.Resource {
+	case "pods":
+		pod := &corev1.Pod{}
+		if err := json.Unmarshal(req.Object.Raw, pod); err != nil {
+			return rules.Request{}, fmt.Errorf("decode Pod: %w", err)
+		}
+		request.Object = pod
+	case "services":
+		service := &corev1.Service{}
+		if err := json.Unmarshal(req.Object.Raw, service); err != nil {
+			return rules.Request{}, fmt.Errorf("decode Service: %w", err)
+		}
+		request.Object = service
+	}
+	return request, nil
+}
 
 func deny(message string) *admissionv1.AdmissionResponse {
 	return &admissionv1.AdmissionResponse{Allowed: false, Result: &metav1.Status{Message: message, Code: http.StatusForbidden}}

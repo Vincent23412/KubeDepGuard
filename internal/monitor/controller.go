@@ -46,7 +46,11 @@ func NewWithInformers(pods coreinformers.PodInformer, services coreinformers.Ser
 		DeleteFunc: func(any) { c.enqueueAllServices() },
 	})
 	services.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueue("service", obj) }, UpdateFunc: func(_, obj any) { c.enqueue("service", obj) }, DeleteFunc: func(obj any) { c.enqueue("service", obj) }})
-	configMaps.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueueAffectedPods(obj) }, UpdateFunc: func(_, obj any) { c.enqueueAffectedPods(obj) }, DeleteFunc: func(obj any) { c.enqueueAffectedPods(obj) }})
+	configMaps.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
+		AddFunc:    func(obj any) { c.enqueueReferencingPods(obj) },
+		UpdateFunc: func(_, obj any) { c.enqueueReferencingPods(obj) },
+		DeleteFunc: func(obj any) { c.enqueuePodsAffectedByTargetDeletion(obj) },
+	})
 	endpointSlices.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueueEndpointService(obj) }, UpdateFunc: func(_, obj any) { c.enqueueEndpointService(obj) }, DeleteFunc: func(obj any) { c.enqueueEndpointService(obj) }})
 	return c
 }
@@ -178,7 +182,9 @@ func (c *Controller) enqueueAllServices() {
 		c.enqueue("service", svc)
 	}
 }
-func (c *Controller) enqueueAffectedPods(obj any) {
+
+// enqueueReferencingPods rechecks Pods when a target is created or updated.
+func (c *Controller) enqueueReferencingPods(obj any) {
 	cm, ok := obj.(*corev1.ConfigMap)
 	if !ok {
 		return
@@ -198,6 +204,36 @@ func (c *Controller) enqueueAffectedPods(obj any) {
 					c.enqueue("pod", pod)
 					break
 				}
+			}
+		}
+	}
+}
+
+// enqueuePodsAffectedByTargetDeletion delegates reverse-dependency matching to
+// direct rules, mirroring the admission webhook's target deletion flow.
+func (c *Controller) enqueuePodsAffectedByTargetDeletion(obj any) {
+	cm, ok := obj.(*corev1.ConfigMap)
+	if !ok {
+		tombstone, isTombstone := obj.(cache.DeletedFinalStateUnknown)
+		if !isTombstone {
+			return
+		}
+		cm, ok = tombstone.Obj.(*corev1.ConfigMap)
+		if !ok {
+			return
+		}
+	}
+	target := resolver.Target{Kind: "ConfigMap", Namespace: cm.Namespace, Name: cm.Name}
+	pods, _ := c.pods.Lister().Pods(cm.Namespace).List(labels.Everything())
+	for _, pod := range pods {
+		references, err := catalog.DefaultReferenceRegistry.Extract("Pod", pod)
+		if err != nil {
+			continue
+		}
+		for _, rule := range rules.DefaultRegistry.DirectReferenceRules() {
+			if len(rule.ValidateTargetDeletion(pod, references, target)) > 0 {
+				c.enqueue("pod", pod)
+				break
 			}
 		}
 	}
