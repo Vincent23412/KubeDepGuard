@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"github.com/vincent/KubeDepGuard/internal/dependency"
+	ref "github.com/vincent/KubeDepGuard/internal/dependency/reference"
+	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
+	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -28,12 +31,13 @@ type Controller struct {
 	queue          workqueue.TypedRateLimitingInterface[string]
 	recorder       record.EventRecorder
 	log            *slog.Logger
+	resolver       *resolver.ListerResolver
 	ready          chan struct{}
 	readyOnce      sync.Once
 }
 
 func NewWithInformers(pods coreinformers.PodInformer, services coreinformers.ServiceInformer, configMaps coreinformers.ConfigMapInformer, endpointSlices discoveryinformers.EndpointSliceInformer, recorder record.EventRecorder, log *slog.Logger) *Controller {
-	c := &Controller{pods: pods, services: services, configMaps: configMaps, endpointSlices: endpointSlices, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()), recorder: recorder, log: log, ready: make(chan struct{})}
+	c := &Controller{pods: pods, services: services, configMaps: configMaps, endpointSlices: endpointSlices, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()), recorder: recorder, log: log, resolver: resolver.NewListerResolver(configMaps.Lister()), ready: make(chan struct{})}
 	pods.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    func(obj any) { c.enqueue("pod", obj); c.enqueueAllServices() },
 		UpdateFunc: func(_, obj any) { c.enqueue("pod", obj); c.enqueueAllServices() },
@@ -106,14 +110,12 @@ func (c *Controller) reconcile(key string) error {
 		if dependency.ModeFor(pod) == dependency.ModeDisabled {
 			return nil
 		}
-		for _, rule := range dependency.DefaultRegistry.PodDirectReferenceRules() {
-			for _, v := range rule.Validate(pod, func(kind, name string) bool {
-				if kind != "ConfigMap" {
-					return false
-				}
-				_, err := c.configMaps.Lister().ConfigMaps(namespace).Get(name)
-				return err == nil
-			}) {
+		references, err := ref.DefaultRegistry.Extract("Pod", pod)
+		if err != nil {
+			return err
+		}
+		for _, rule := range rules.DefaultRegistry.DirectReferenceRules() {
+			for _, v := range rule.Validate(pod, references, c.resolver) {
 				c.warn(pod, v)
 			}
 		}
@@ -128,7 +130,7 @@ func (c *Controller) reconcile(key string) error {
 		podList, _ := c.pods.Lister().Pods(namespace).List(labels.Everything())
 		pods := make([]*corev1.Pod, len(podList))
 		copy(pods, podList)
-		for _, rule := range dependency.DefaultRegistry.ServiceConditionalRules() {
+		for _, rule := range rules.DefaultRegistry.ServiceConditionalRules() {
 			for _, v := range rule.Validate(svc, pods) {
 				c.warn(svc, v)
 			}
@@ -176,12 +178,16 @@ func (c *Controller) enqueueAffectedPods(obj any) {
 	}
 	pods, _ := c.pods.Lister().Pods(cm.Namespace).List(labels.Everything())
 	for _, pod := range pods {
-		for _, rule := range dependency.DefaultRegistry.PodDirectReferenceRules() {
+		references, err := ref.DefaultRegistry.Extract("Pod", pod)
+		if err != nil {
+			continue
+		}
+		for _, rule := range rules.DefaultRegistry.DirectReferenceRules() {
 			if rule.TargetKind() != "ConfigMap" {
 				continue
 			}
-			for _, ref := range rule.References(pod) {
-				if ref == cm.Name {
+			for _, ref := range references {
+				if ref.TargetKind == rule.TargetKind() && ref.Name == cm.Name {
 					c.enqueue("pod", pod)
 					break
 				}

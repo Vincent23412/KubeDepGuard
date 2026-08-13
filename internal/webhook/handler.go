@@ -8,6 +8,9 @@ import (
 	"net/http"
 
 	"github.com/vincent/KubeDepGuard/internal/dependency"
+	ref "github.com/vincent/KubeDepGuard/internal/dependency/reference"
+	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
+	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -18,14 +21,14 @@ import (
 const ValidationPath = "/validate/dependencies"
 
 type Handler struct {
-	pods       corelisters.PodLister
-	configMaps corelisters.ConfigMapLister
-	services   corelisters.ServiceLister
-	log        *slog.Logger
+	pods     corelisters.PodLister
+	resolver *resolver.ListerResolver
+	services corelisters.ServiceLister
+	log      *slog.Logger
 }
 
 func New(pods corelisters.PodLister, configMaps corelisters.ConfigMapLister, services corelisters.ServiceLister, log *slog.Logger) *Handler {
-	return &Handler{pods: pods, configMaps: configMaps, services: services, log: log}
+	return &Handler{pods: pods, resolver: resolver.NewListerResolver(configMaps), services: services, log: log}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +81,7 @@ func (h *Handler) validate(req *admissionv1.AdmissionRequest) *admissionv1.Admis
 			}
 			for _, svc := range services {
 				if dependency.ModeFor(svc) == dependency.ModeEnforce {
-					for _, rule := range dependency.DefaultRegistry.ServiceConditionalRules() {
+					for _, rule := range rules.DefaultRegistry.ServiceConditionalRules() {
 						if !rule.HasMatch(svc, remaining) {
 							violations = append(violations, rule.Validate(svc, remaining)...)
 							reject = true
@@ -90,14 +93,12 @@ func (h *Handler) validate(req *admissionv1.AdmissionRequest) *admissionv1.Admis
 			return deny(fmt.Sprintf("decode Pod: %v", err))
 		}
 		if req.Operation != admissionv1.Delete && dependency.ModeFor(&pod) != dependency.ModeDisabled {
-			for _, rule := range dependency.DefaultRegistry.PodDirectReferenceRules() {
-				violations = append(violations, rule.Validate(&pod, func(kind, name string) bool {
-					if kind != "ConfigMap" {
-						return false
-					}
-					_, err := h.configMaps.ConfigMaps(pod.Namespace).Get(name)
-					return err == nil
-				})...)
+			references, err := ref.DefaultRegistry.Extract("Pod", &pod)
+			if err != nil {
+				return deny(fmt.Sprintf("extract Pod references: %v", err))
+			}
+			for _, rule := range rules.DefaultRegistry.DirectReferenceRules() {
+				violations = append(violations, rule.Validate(&pod, references, h.resolver)...)
 			}
 			reject = len(violations) > 0 && dependency.ModeFor(&pod) == dependency.ModeEnforce
 		}
@@ -114,7 +115,7 @@ func (h *Handler) validate(req *admissionv1.AdmissionRequest) *admissionv1.Admis
 			if err != nil {
 				return deny(fmt.Sprintf("list Pods: %v", err))
 			}
-			for _, rule := range dependency.DefaultRegistry.ServiceConditionalRules() {
+			for _, rule := range rules.DefaultRegistry.ServiceConditionalRules() {
 				violations = append(violations, rule.Validate(&service, pods)...)
 			}
 			reject = len(violations) > 0 && dependency.ModeFor(&service) == dependency.ModeEnforce
@@ -131,12 +132,16 @@ func (h *Handler) validate(req *admissionv1.AdmissionRequest) *admissionv1.Admis
 			if dependency.ModeFor(pod) != dependency.ModeEnforce {
 				continue
 			}
-			for _, rule := range dependency.DefaultRegistry.PodDirectReferenceRules() {
+			for _, rule := range rules.DefaultRegistry.DirectReferenceRules() {
 				if rule.TargetKind() != "ConfigMap" {
 					continue
 				}
-				for _, ref := range rule.References(pod) {
-					if ref == req.Name {
+				references, err := ref.DefaultRegistry.Extract("Pod", pod)
+				if err != nil {
+					return deny(fmt.Sprintf("extract Pod references: %v", err))
+				}
+				for _, ref := range references {
+					if ref.TargetKind == rule.TargetKind() && ref.Name == req.Name {
 						violations = append(violations, dependency.Violation{"ReferencedConfigMapDeletion", req.Namespace + "/" + req.Name, fmt.Sprintf("is still referenced by enforce Pod %s", pod.Name)})
 						reject = true
 					}
