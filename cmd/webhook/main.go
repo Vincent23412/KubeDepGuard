@@ -33,8 +33,13 @@ func main() {
 	podInformer := factory.Core().V1().Pods()
 	configMapInformer := factory.Core().V1().ConfigMaps()
 	serviceInformer := factory.Core().V1().Services()
+	// Informers are created lazily. Materialize them before Start so the factory
+	// has all three cache controllers to run.
+	podCache := podInformer.Informer()
+	configMapCache := configMapInformer.Informer()
+	serviceCache := serviceInformer.Informer()
 	factory.Start(ctx.Done())
-	if !cache.WaitForCacheSync(ctx.Done(), podInformer.Informer().HasSynced, configMapInformer.Informer().HasSynced, serviceInformer.Informer().HasSynced) {
+	if !cache.WaitForCacheSync(ctx.Done(), podCache.HasSynced, configMapCache.HasSynced, serviceCache.HasSynced) {
 		log.Error("informer cache did not synchronize")
 		os.Exit(1)
 	}

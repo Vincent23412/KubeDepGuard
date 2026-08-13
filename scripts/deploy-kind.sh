@@ -35,6 +35,10 @@ kubectl -n "$namespace" create secret tls kube-dep-guard-webhook-tls --cert="$tm
 kubectl apply -f deploy/webhook/service.yaml
 kubectl apply -f deploy/webhook/deployment.yaml
 kubectl apply -f deploy/monitor/deployment.yaml
+# A TLS Secret update does not restart the Pod, and the Go server reads its
+# certificate only at startup. Restart so the serving certificate matches the
+# CA bundle patched into the ValidatingWebhookConfiguration below.
+kubectl -n "$namespace" rollout restart deployment/kube-dep-guard-webhook
 kubectl -n "$namespace" rollout status deployment/kube-dep-guard-webhook --timeout=120s
 kubectl apply -f deploy/webhook/validating-webhook.yaml
 ca_bundle=$(base64 <"$tmp_dir/ca.crt" | tr -d '\n')
