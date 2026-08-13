@@ -28,6 +28,27 @@ The Webhook exposes these HTTPS paths:
 
 The Monitor exposes `/healthz` and `/readyz` over its internal HTTP port `8080`.
 
+## Direct-reference extension points
+
+Direct dependency processing is split into three layers so Kubernetes field
+traversal is not coupled to validation policy:
+
+```text
+typed resource → ReferenceExtractor → []Reference → DirectReferenceRule → TargetResolver
+```
+
+- `PodReferenceExtractor` owns paths such as `spec.volumes[].configMap` and
+  environment-variable ConfigMap references.
+- `Reference` retains the target kind, namespace, name, optional flag, key, and
+  source `FieldPath` for precise diagnostics.
+- `ConfigMapReferenceRule` only checks ConfigMap references; it does not inspect
+  Pod fields.
+
+To support a new source resource, register one extractor in
+`DefaultExtractorRegistry`. To support a new target kind, add its direct rule
+to `DefaultRegistry` and make the Webhook/Monitor resolver plus RBAC able to
+read that target kind.
+
 ## Policy
 
 Set `dependency.kubedepguard.io/mode` on a Pod or Service:
