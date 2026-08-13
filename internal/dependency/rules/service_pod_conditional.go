@@ -42,7 +42,7 @@ func (r ServicePodRule) Applies(request Request) bool {
 		(request.Resource == "pods" && request.Operation == Delete)
 }
 
-func (r ServicePodRule) Evaluate(request Request, query Query) (Result, error) {
+func (r ServicePodRule) Evaluate(request Request, query resolver.Query) (Result, error) {
 	switch {
 	case request.Resource == "services":
 		svc, ok := request.Object.(*corev1.Service)
@@ -104,7 +104,7 @@ func (r ServicePodRule) Evaluate(request Request, query Query) (Result, error) {
 	}
 }
 
-type queryPodLister struct{ query Query }
+type queryPodLister struct{ query resolver.Query }
 
 func (l queryPodLister) List(namespace string) ([]*corev1.Pod, error) {
 	return l.query.ListPods(namespace)

@@ -7,12 +7,10 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
 	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
 	admissionv1 "k8s.io/api/admission/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	corelisters "k8s.io/client-go/listers/core/v1"
 )
 
 const ValidationPath = "/validate/dependencies"
@@ -22,9 +20,8 @@ type Handler struct {
 	log       *slog.Logger
 }
 
-func New(pods corelisters.PodLister, configMaps corelisters.ConfigMapLister, services corelisters.ServiceLister, log *slog.Logger) *Handler {
-	query := resolver.NewInformerQuery(pods, configMaps, services)
-	return &Handler{evaluator: rules.NewEvaluator(query, rules.DefaultRegistry.AdmissionRules()), log: log}
+func New(evaluator *rules.Evaluator, log *slog.Logger) *Handler {
+	return &Handler{evaluator: evaluator, log: log}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

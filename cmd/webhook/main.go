@@ -10,6 +10,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
+	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
 	"github.com/vincent/KubeDepGuard/internal/kube"
 	"github.com/vincent/KubeDepGuard/internal/webhook"
 	"k8s.io/client-go/informers"
@@ -44,7 +46,9 @@ func main() {
 		os.Exit(1)
 	}
 	mux := http.NewServeMux()
-	mux.Handle(webhook.ValidationPath, webhook.New(podInformer.Lister(), configMapInformer.Lister(), serviceInformer.Lister(), log))
+	query := resolver.NewInformerQuery(podInformer.Lister(), configMapInformer.Lister(), serviceInformer.Lister())
+	evaluator := rules.NewEvaluator(query, rules.DefaultRegistry.AdmissionRules())
+	mux.Handle(webhook.ValidationPath, webhook.New(evaluator, log))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	server := &http.Server{Addr: *addr, Handler: mux, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12}}

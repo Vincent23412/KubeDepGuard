@@ -5,7 +5,6 @@ import (
 
 	"github.com/vincent/KubeDepGuard/internal/dependency"
 	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
-	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -26,14 +25,6 @@ type Request struct {
 	Object    runtime.Object
 }
 
-// Query is the read-only Kubernetes state available to rules.
-type Query interface {
-	resolver.TargetResolver
-	GetPod(namespace, name string) (*corev1.Pod, error)
-	ListPods(namespace string) ([]*corev1.Pod, error)
-	ListServices(namespace string) ([]*corev1.Service, error)
-}
-
 type Result struct {
 	Violations []dependency.Violation
 	Reject     bool
@@ -42,16 +33,16 @@ type Result struct {
 type AdmissionRule interface {
 	Rule
 	Applies(Request) bool
-	Evaluate(Request, Query) (Result, error)
+	Evaluate(Request, resolver.Query) (Result, error)
 }
 
 // Evaluator runs every rule relevant to one admission operation.
 type Evaluator struct {
-	query Query
+	query resolver.Query
 	rules []AdmissionRule
 }
 
-func NewEvaluator(query Query, rules []AdmissionRule) *Evaluator {
+func NewEvaluator(query resolver.Query, rules []AdmissionRule) *Evaluator {
 	return &Evaluator{query: query, rules: append([]AdmissionRule(nil), rules...)}
 }
 

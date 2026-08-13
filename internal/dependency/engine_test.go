@@ -53,7 +53,7 @@ func (testQuery) GetPod(string, string) (*corev1.Pod, error)     { return nil, n
 func (testQuery) ListPods(string) ([]*corev1.Pod, error)         { return nil, nil }
 func (testQuery) ListServices(string) ([]*corev1.Service, error) { return nil, nil }
 
-var _ rules.Query = testQuery{}
+var _ resolver.Query = testQuery{}
 
 func TestDefaultRegistryCategories(t *testing.T) {
 	if got := len(rules.DefaultRegistry.DirectReferenceRules()); got != 1 {

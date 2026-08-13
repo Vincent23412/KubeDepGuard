@@ -31,7 +31,7 @@ func (r PodConfigMapRule) Applies(request Request) bool {
 		(request.Resource == "configmaps" && request.Operation == Delete)
 }
 
-func (r PodConfigMapRule) Evaluate(request Request, query Query) (Result, error) {
+func (r PodConfigMapRule) Evaluate(request Request, query resolver.Query) (Result, error) {
 	switch {
 	case request.Resource == "pods":
 		pod, ok := request.Object.(*corev1.Pod)
