@@ -4,6 +4,7 @@ package rules
 import (
 	"github.com/vincent/KubeDepGuard/internal/dependency"
 	ref "github.com/vincent/KubeDepGuard/internal/dependency/reference"
+	serviceRef "github.com/vincent/KubeDepGuard/internal/dependency/reference/service"
 	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -17,8 +18,7 @@ type DirectRule interface {
 }
 type ServiceConditionalRule interface {
 	Rule
-	HasMatch(*corev1.Service, []*corev1.Pod) bool
-	Validate(*corev1.Service, []*corev1.Pod) []dependency.Violation
+	Validate(*corev1.Service, serviceRef.Selector, resolver.PodLister) ([]dependency.Violation, error)
 }
 
 type Registry struct {
@@ -31,4 +31,4 @@ func (r *Registry) ServiceConditionalRules() []ServiceConditionalRule {
 	return append([]ServiceConditionalRule(nil), r.conditional...)
 }
 
-var DefaultRegistry = &Registry{direct: []DirectRule{NewConfigMapReferenceRule()}, conditional: []ServiceConditionalRule{NewServiceSelectorRule()}}
+var DefaultRegistry = &Registry{direct: []DirectRule{NewPodConfigMapRule()}, conditional: []ServiceConditionalRule{NewServicePodRule()}}

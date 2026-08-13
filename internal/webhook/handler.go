@@ -8,7 +8,9 @@ import (
 	"net/http"
 
 	"github.com/vincent/KubeDepGuard/internal/dependency"
+	"github.com/vincent/KubeDepGuard/internal/dependency/catalog"
 	ref "github.com/vincent/KubeDepGuard/internal/dependency/reference"
+	serviceRef "github.com/vincent/KubeDepGuard/internal/dependency/reference/service"
 	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
 	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
 	admissionv1 "k8s.io/api/admission/v1"
@@ -21,14 +23,15 @@ import (
 const ValidationPath = "/validate/dependencies"
 
 type Handler struct {
-	pods     corelisters.PodLister
-	resolver *resolver.ListerResolver
-	services corelisters.ServiceLister
-	log      *slog.Logger
+	pods      corelisters.PodLister
+	resolver  *resolver.ListerResolver
+	podLister resolver.PodLister
+	services  corelisters.ServiceLister
+	log       *slog.Logger
 }
 
 func New(pods corelisters.PodLister, configMaps corelisters.ConfigMapLister, services corelisters.ServiceLister, log *slog.Logger) *Handler {
-	return &Handler{pods: pods, resolver: resolver.NewListerResolver(configMaps), services: services, log: log}
+	return &Handler{pods: pods, resolver: resolver.NewListerResolver(configMaps), podLister: resolver.NewInformerPodLister(pods), services: services, log: log}
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -81,9 +84,17 @@ func (h *Handler) validate(req *admissionv1.AdmissionRequest) *admissionv1.Admis
 			}
 			for _, svc := range services {
 				if dependency.ModeFor(svc) == dependency.ModeEnforce {
+					selector, err := serviceRef.NewSelectorExtractor().Extract(svc)
+					if err != nil {
+						return deny(fmt.Sprintf("extract Service selector: %v", err))
+					}
 					for _, rule := range rules.DefaultRegistry.ServiceConditionalRules() {
-						if !rule.HasMatch(svc, remaining) {
-							violations = append(violations, rule.Validate(svc, remaining)...)
+						found, err := rule.Validate(svc, selector, staticPodLister{pods: remaining})
+						if err != nil {
+							return deny(fmt.Sprintf("validate Service selector: %v", err))
+						}
+						if len(found) > 0 {
+							violations = append(violations, found...)
 							reject = true
 						}
 					}
@@ -93,7 +104,7 @@ func (h *Handler) validate(req *admissionv1.AdmissionRequest) *admissionv1.Admis
 			return deny(fmt.Sprintf("decode Pod: %v", err))
 		}
 		if req.Operation != admissionv1.Delete && dependency.ModeFor(&pod) != dependency.ModeDisabled {
-			references, err := ref.DefaultRegistry.Extract("Pod", &pod)
+			references, err := catalog.DefaultReferenceRegistry.Extract("Pod", &pod)
 			if err != nil {
 				return deny(fmt.Sprintf("extract Pod references: %v", err))
 			}
@@ -115,8 +126,16 @@ func (h *Handler) validate(req *admissionv1.AdmissionRequest) *admissionv1.Admis
 			if err != nil {
 				return deny(fmt.Sprintf("list Pods: %v", err))
 			}
+			selector, err := serviceRef.NewSelectorExtractor().Extract(&service)
+			if err != nil {
+				return deny(fmt.Sprintf("extract Service selector: %v", err))
+			}
 			for _, rule := range rules.DefaultRegistry.ServiceConditionalRules() {
-				violations = append(violations, rule.Validate(&service, pods)...)
+				found, err := rule.Validate(&service, selector, h.podLister)
+				if err != nil {
+					return deny(fmt.Sprintf("validate Service selector: %v", err))
+				}
+				violations = append(violations, found...)
 			}
 			reject = len(violations) > 0 && dependency.ModeFor(&service) == dependency.ModeEnforce
 		}
@@ -136,7 +155,7 @@ func (h *Handler) validate(req *admissionv1.AdmissionRequest) *admissionv1.Admis
 				if rule.TargetKind() != "ConfigMap" {
 					continue
 				}
-				references, err := ref.DefaultRegistry.Extract("Pod", pod)
+				references, err := catalog.DefaultReferenceRegistry.Extract("Pod", pod)
 				if err != nil {
 					return deny(fmt.Sprintf("extract Pod references: %v", err))
 				}
@@ -160,6 +179,10 @@ func (h *Handler) validate(req *admissionv1.AdmissionRequest) *admissionv1.Admis
 	}
 	return allow()
 }
+
+type staticPodLister struct{ pods []*corev1.Pod }
+
+func (l staticPodLister) List(string) ([]*corev1.Pod, error) { return l.pods, nil }
 
 func deny(message string) *admissionv1.AdmissionResponse {
 	return &admissionv1.AdmissionResponse{Allowed: false, Result: &metav1.Status{Message: message, Code: http.StatusForbidden}}

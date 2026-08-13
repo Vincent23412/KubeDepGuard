@@ -3,7 +3,9 @@ package dependency_test
 import (
 	"testing"
 
-	ref "github.com/vincent/KubeDepGuard/internal/dependency/reference"
+	"github.com/vincent/KubeDepGuard/internal/dependency/catalog"
+	serviceRef "github.com/vincent/KubeDepGuard/internal/dependency/reference/service"
+	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
 	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -11,7 +13,7 @@ import (
 
 func TestConfigMapReferences(t *testing.T) {
 	pod := &corev1.Pod{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "volume"}}}}}, Containers: []corev1.Container{{EnvFrom: []corev1.EnvFromSource{{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "all-env"}}}}, Env: []corev1.EnvVar{{ValueFrom: &corev1.EnvVarSource{ConfigMapKeyRef: &corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "one-env"}}}}}}}}}
-	references, err := ref.DefaultRegistry.Extract("Pod", pod)
+	references, err := catalog.DefaultReferenceRegistry.Extract("Pod", pod)
 	if err != nil {
 		t.Fatalf("extract references: %v", err)
 	}
@@ -26,11 +28,21 @@ func TestConfigMapReferences(t *testing.T) {
 func TestServiceHasMatchingPod(t *testing.T) {
 	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "test"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}}}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "test", Labels: map[string]string{"app": "api"}}}
-	rule := NewServicePodSelectorRule().(ServiceSelectorRule)
-	if !rule.HasMatch(svc, []*corev1.Pod{pod}) {
+	selector, err := serviceRef.NewSelectorExtractor().Extract(svc)
+	if err != nil {
+		t.Fatalf("extract selector: %v", err)
+	}
+	violations, err := rules.NewServiceSelectorRule().Validate(svc, selector, testPodLister{pods: []*corev1.Pod{pod}})
+	if err != nil || len(violations) != 0 {
 		t.Fatal("expected match")
 	}
 }
+
+type testPodLister struct{ pods []*corev1.Pod }
+
+func (l testPodLister) List(string) ([]*corev1.Pod, error) { return l.pods, nil }
+
+var _ resolver.PodLister = testPodLister{}
 
 func TestDefaultRegistryCategories(t *testing.T) {
 	if got := len(rules.DefaultRegistry.DirectReferenceRules()); got != 1 {

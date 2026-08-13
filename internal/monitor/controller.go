@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/vincent/KubeDepGuard/internal/dependency"
+	"github.com/vincent/KubeDepGuard/internal/dependency/catalog"
 	ref "github.com/vincent/KubeDepGuard/internal/dependency/reference"
+	serviceRef "github.com/vincent/KubeDepGuard/internal/dependency/reference/service"
 	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
 	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
 	corev1 "k8s.io/api/core/v1"
@@ -32,12 +34,13 @@ type Controller struct {
 	recorder       record.EventRecorder
 	log            *slog.Logger
 	resolver       *resolver.ListerResolver
+	podLister      resolver.PodLister
 	ready          chan struct{}
 	readyOnce      sync.Once
 }
 
 func NewWithInformers(pods coreinformers.PodInformer, services coreinformers.ServiceInformer, configMaps coreinformers.ConfigMapInformer, endpointSlices discoveryinformers.EndpointSliceInformer, recorder record.EventRecorder, log *slog.Logger) *Controller {
-	c := &Controller{pods: pods, services: services, configMaps: configMaps, endpointSlices: endpointSlices, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()), recorder: recorder, log: log, resolver: resolver.NewListerResolver(configMaps.Lister()), ready: make(chan struct{})}
+	c := &Controller{pods: pods, services: services, configMaps: configMaps, endpointSlices: endpointSlices, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()), recorder: recorder, log: log, resolver: resolver.NewListerResolver(configMaps.Lister()), podLister: resolver.NewInformerPodLister(pods.Lister()), ready: make(chan struct{})}
 	pods.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    func(obj any) { c.enqueue("pod", obj); c.enqueueAllServices() },
 		UpdateFunc: func(_, obj any) { c.enqueue("pod", obj); c.enqueueAllServices() },
@@ -110,7 +113,7 @@ func (c *Controller) reconcile(key string) error {
 		if dependency.ModeFor(pod) == dependency.ModeDisabled {
 			return nil
 		}
-		references, err := ref.DefaultRegistry.Extract("Pod", pod)
+		references, err := catalog.DefaultReferenceRegistry.Extract("Pod", pod)
 		if err != nil {
 			return err
 		}
@@ -127,11 +130,16 @@ func (c *Controller) reconcile(key string) error {
 		if dependency.ModeFor(svc) == dependency.ModeDisabled {
 			return nil
 		}
-		podList, _ := c.pods.Lister().Pods(namespace).List(labels.Everything())
-		pods := make([]*corev1.Pod, len(podList))
-		copy(pods, podList)
+		selector, err := serviceRef.NewSelectorExtractor().Extract(svc)
+		if err != nil {
+			return err
+		}
 		for _, rule := range rules.DefaultRegistry.ServiceConditionalRules() {
-			for _, v := range rule.Validate(svc, pods) {
+			found, err := rule.Validate(svc, selector, c.podLister)
+			if err != nil {
+				return err
+			}
+			for _, v := range found {
 				c.warn(svc, v)
 			}
 		}
@@ -178,7 +186,7 @@ func (c *Controller) enqueueAffectedPods(obj any) {
 	}
 	pods, _ := c.pods.Lister().Pods(cm.Namespace).List(labels.Everything())
 	for _, pod := range pods {
-		references, err := ref.DefaultRegistry.Extract("Pod", pod)
+		references, err := catalog.DefaultReferenceRegistry.Extract("Pod", pod)
 		if err != nil {
 			continue
 		}

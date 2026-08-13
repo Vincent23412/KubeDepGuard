@@ -45,5 +45,3 @@ func (r *Registry) Extract(kind string, object runtime.Object) ([]Reference, err
 	}
 	return references, nil
 }
-
-var DefaultRegistry = NewRegistry(NewPodConfigMapExtractor)
