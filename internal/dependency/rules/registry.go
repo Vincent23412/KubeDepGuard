@@ -15,6 +15,7 @@ type DirectRule interface {
 	Rule
 	TargetKind() string
 	Validate(metav1.Object, []ref.Reference, resolver.TargetResolver) []dependency.Violation
+	ValidateTargetDeletion(metav1.Object, []ref.Reference, resolver.Target) []dependency.Violation
 }
 type ServiceConditionalRule interface {
 	Rule

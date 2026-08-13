@@ -17,3 +17,7 @@ func NewPodConfigMapRule() PodConfigMapRule {
 func (r PodConfigMapRule) Validate(source metav1.Object, refs []ref.Reference, targets resolver.TargetResolver) []dependency.Violation {
 	return r.missing(source, refs, targets)
 }
+
+func (r PodConfigMapRule) ValidateTargetDeletion(source metav1.Object, refs []ref.Reference, target resolver.Target) []dependency.Violation {
+	return r.referencedBy(source, refs, target, "Pod")
+}

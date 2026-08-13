@@ -13,6 +13,7 @@ type DirectReferenceRule struct{ RuleName, TargetResourceKind string }
 
 func (r DirectReferenceRule) Name() string       { return r.RuleName }
 func (r DirectReferenceRule) TargetKind() string { return r.TargetResourceKind }
+
 func (r DirectReferenceRule) missing(source metav1.Object, refs []ref.Reference, targets resolver.TargetResolver) []dependency.Violation {
 	var out []dependency.Violation
 	for _, x := range refs {
@@ -29,4 +30,19 @@ func (r DirectReferenceRule) missing(source metav1.Object, refs []ref.Reference,
 		}
 	}
 	return out
+}
+
+// referencedBy reports an inbound dependency while a target is being deleted.
+// Concrete rules supply the source kind so the message remains meaningful.
+func (r DirectReferenceRule) referencedBy(source metav1.Object, refs []ref.Reference, target resolver.Target, sourceKind string) []dependency.Violation {
+	for _, x := range refs {
+		if x.TargetKind == r.TargetKind() && x.Namespace == target.Namespace && x.Name == target.Name {
+			return []dependency.Violation{{
+				Rule:     "Referenced" + r.TargetKind() + "Deletion",
+				Resource: target.Namespace + "/" + target.Name,
+				Message:  fmt.Sprintf("is still referenced by enforce %s %s", sourceKind, source.GetName()),
+			}}
+		}
+	}
+	return nil
 }

@@ -138,6 +138,7 @@ func (h *Handler) validate(req *admissionv1.AdmissionRequest) *admissionv1.Admis
 		if req.Operation != admissionv1.Delete {
 			break
 		}
+		target := resolver.Target{Kind: "ConfigMap", Namespace: req.Namespace, Name: req.Name}
 		pods, err := h.pods.Pods(req.Namespace).List(labels.Everything())
 		if err != nil {
 			return deny(fmt.Sprintf("list Pods: %v", err))
@@ -146,20 +147,14 @@ func (h *Handler) validate(req *admissionv1.AdmissionRequest) *admissionv1.Admis
 			if dependency.ModeFor(pod) != dependency.ModeEnforce {
 				continue
 			}
+			references, err := catalog.DefaultReferenceRegistry.Extract("Pod", pod)
+			if err != nil {
+				return deny(fmt.Sprintf("extract Pod references: %v", err))
+			}
 			for _, rule := range rules.DefaultRegistry.DirectReferenceRules() {
-				if rule.TargetKind() != "ConfigMap" {
-					continue
-				}
-				references, err := catalog.DefaultReferenceRegistry.Extract("Pod", pod)
-				if err != nil {
-					return deny(fmt.Sprintf("extract Pod references: %v", err))
-				}
-				for _, ref := range references {
-					if ref.TargetKind == rule.TargetKind() && ref.Name == req.Name {
-						violations = append(violations, dependency.Violation{"ReferencedConfigMapDeletion", req.Namespace + "/" + req.Name, fmt.Sprintf("is still referenced by enforce Pod %s", pod.Name)})
-						reject = true
-					}
-				}
+				found := rule.ValidateTargetDeletion(pod, references, target)
+				violations = append(violations, found...)
+				reject = reject || len(found) > 0
 			}
 		}
 	}

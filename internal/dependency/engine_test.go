@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/vincent/KubeDepGuard/internal/dependency/catalog"
+	ref "github.com/vincent/KubeDepGuard/internal/dependency/reference"
 	serviceRef "github.com/vincent/KubeDepGuard/internal/dependency/reference/service"
 	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
 	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
@@ -50,5 +51,17 @@ func TestDefaultRegistryCategories(t *testing.T) {
 	}
 	if got := len(rules.DefaultRegistry.ServiceConditionalRules()); got != 1 {
 		t.Fatalf("conditional rule count = %d, want 1", got)
+	}
+}
+
+func TestPodConfigMapRuleRejectsReferencedTargetDeletion(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test"}}
+	refs := []ref.Reference{{SourceKind: "Pod", TargetKind: "ConfigMap", Namespace: "test", Name: "settings"}}
+	violations := rules.NewPodConfigMapRule().ValidateTargetDeletion(pod, refs, resolver.Target{Kind: "ConfigMap", Namespace: "test", Name: "settings"})
+	if got := len(violations); got != 1 {
+		t.Fatalf("violations = %d, want 1", got)
+	}
+	if violations[0].Rule != "ReferencedConfigMapDeletion" {
+		t.Fatalf("rule = %q", violations[0].Rule)
 	}
 }
