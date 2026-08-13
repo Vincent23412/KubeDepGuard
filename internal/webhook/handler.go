@@ -9,7 +9,6 @@ import (
 
 	"github.com/vincent/KubeDepGuard/internal/dependency"
 	"github.com/vincent/KubeDepGuard/internal/dependency/catalog"
-	ref "github.com/vincent/KubeDepGuard/internal/dependency/reference"
 	serviceRef "github.com/vincent/KubeDepGuard/internal/dependency/reference/service"
 	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
 	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
@@ -122,10 +121,6 @@ func (h *Handler) validate(req *admissionv1.AdmissionRequest) *admissionv1.Admis
 			return deny(fmt.Sprintf("decode Service: %v", err))
 		}
 		if dependency.ModeFor(&service) != dependency.ModeDisabled {
-			pods, err := h.pods.Pods(service.Namespace).List(labels.Everything())
-			if err != nil {
-				return deny(fmt.Sprintf("list Pods: %v", err))
-			}
 			selector, err := serviceRef.NewSelectorExtractor().Extract(&service)
 			if err != nil {
 				return deny(fmt.Sprintf("extract Service selector: %v", err))

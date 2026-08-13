@@ -32,7 +32,7 @@ func TestServiceHasMatchingPod(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extract selector: %v", err)
 	}
-	violations, err := rules.NewServiceSelectorRule().Validate(svc, selector, testPodLister{pods: []*corev1.Pod{pod}})
+	violations, err := rules.NewServicePodRule().Validate(svc, selector, testPodLister{pods: []*corev1.Pod{pod}})
 	if err != nil || len(violations) != 0 {
 		t.Fatal("expected match")
 	}

@@ -10,7 +10,6 @@ import (
 
 	"github.com/vincent/KubeDepGuard/internal/dependency"
 	"github.com/vincent/KubeDepGuard/internal/dependency/catalog"
-	ref "github.com/vincent/KubeDepGuard/internal/dependency/reference"
 	serviceRef "github.com/vincent/KubeDepGuard/internal/dependency/reference/service"
 	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
 	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
