@@ -12,10 +12,9 @@ import (
 
 	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
 	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
+	rulecatalog "github.com/vincent/KubeDepGuard/internal/dependency/rules/catalog"
 	"github.com/vincent/KubeDepGuard/internal/kube"
 	"github.com/vincent/KubeDepGuard/internal/webhook"
-	"k8s.io/client-go/informers"
-	"k8s.io/client-go/tools/cache"
 )
 
 func main() {
@@ -31,23 +30,13 @@ func main() {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	factory := informers.NewSharedInformerFactory(client, 0)
-	podInformer := factory.Core().V1().Pods()
-	configMapInformer := factory.Core().V1().ConfigMaps()
-	serviceInformer := factory.Core().V1().Services()
-	// Informers are created lazily. Materialize them before Start so the factory
-	// has all three cache controllers to run.
-	podCache := podInformer.Informer()
-	configMapCache := configMapInformer.Informer()
-	serviceCache := serviceInformer.Informer()
-	factory.Start(ctx.Done())
-	if !cache.WaitForCacheSync(ctx.Done(), podCache.HasSynced, configMapCache.HasSynced, serviceCache.HasSynced) {
-		log.Error("informer cache did not synchronize")
+	informerResolver := resolver.NewInformerResolver(client)
+	if err := informerResolver.Start(ctx); err != nil {
+		log.Error("start dependency resolver", "error", err)
 		os.Exit(1)
 	}
 	mux := http.NewServeMux()
-	query := resolver.NewInformerQuery(podInformer.Lister(), configMapInformer.Lister(), serviceInformer.Lister())
-	evaluator := rules.NewEvaluator(query, rules.DefaultRegistry.AdmissionRules())
+	evaluator := rules.NewEvaluator(informerResolver, rulecatalog.DefaultRegistry.AdmissionRules())
 	mux.Handle(webhook.ValidationPath, webhook.New(evaluator, log))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
