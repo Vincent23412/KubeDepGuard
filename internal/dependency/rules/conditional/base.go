@@ -1,4 +1,4 @@
-package rules
+package conditional
 
 import (
 	"github.com/vincent/KubeDepGuard/internal/dependency"

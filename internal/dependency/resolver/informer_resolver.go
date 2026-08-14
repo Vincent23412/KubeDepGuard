@@ -4,22 +4,17 @@ import (
 	"context"
 	"fmt"
 
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
-	corelisters "k8s.io/client-go/listers/core/v1"
 	"k8s.io/client-go/tools/cache"
 )
 
 // InformerResolver owns the shared informer factory used by admission rules.
 // Its reads are served entirely from informer caches.
 type InformerResolver struct {
-	factory  informers.SharedInformerFactory
-	pods     corelisters.PodLister
-	services corelisters.ServiceLister
-	targets  *ListerResolver
-	syncers  []cache.InformerSynced
+	factory informers.SharedInformerFactory
+	query   *ListerResolver
+	syncers []cache.InformerSynced
 }
 
 // NewInformerResolver registers every resource currently supported by the
@@ -30,10 +25,8 @@ func NewInformerResolver(client kubernetes.Interface) *InformerResolver {
 	configMaps := factory.Core().V1().ConfigMaps()
 	services := factory.Core().V1().Services()
 	return &InformerResolver{
-		factory:  factory,
-		pods:     pods.Lister(),
-		services: services.Lister(),
-		targets:  NewListerResolver(configMaps.Lister()),
+		factory: factory,
+		query:   NewListerResolver(pods.Lister(), configMaps.Lister(), services.Lister()),
 		syncers: []cache.InformerSynced{
 			pods.Informer().HasSynced,
 			configMaps.Informer().HasSynced,
@@ -51,20 +44,8 @@ func (r *InformerResolver) Start(ctx context.Context) error {
 	return nil
 }
 
-func (r *InformerResolver) Exists(target Target) (bool, error) {
-	return r.targets.Exists(target)
-}
-
-func (r *InformerResolver) GetPod(namespace, name string) (*corev1.Pod, error) {
-	return r.pods.Pods(namespace).Get(name)
-}
-
-func (r *InformerResolver) ListPods(namespace string) ([]*corev1.Pod, error) {
-	return r.pods.Pods(namespace).List(labels.Everything())
-}
-
-func (r *InformerResolver) ListServices(namespace string) ([]*corev1.Service, error) {
-	return r.services.Services(namespace).List(labels.Everything())
+func (r *InformerResolver) List(scope ResourceScope) ([]Resource, error) {
+	return r.query.List(scope)
 }
 
 var _ Query = (*InformerResolver)(nil)

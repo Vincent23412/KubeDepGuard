@@ -14,12 +14,11 @@ type Rule interface{ Name() string }
 type DirectRule interface {
 	Rule
 	TargetKind() string
-	Validate(metav1.Object, []ref.Reference, resolver.TargetResolver) []dependency.Violation
-	ValidateTargetDeletion(metav1.Object, []ref.Reference, resolver.Target) []dependency.Violation
+	ValidateTargetDeletion(metav1.Object, []ref.Reference, resolver.ResourceScope, string) []dependency.Violation
 }
 type ServiceConditionalRule interface {
 	Rule
-	Validate(*corev1.Service, serviceRef.Selector, resolver.PodLister) ([]dependency.Violation, error)
+	Validate(*corev1.Service, serviceRef.Selector, []resolver.Resource) []dependency.Violation
 }
 
 type Registry struct {
@@ -36,14 +35,16 @@ func (r *Registry) AdmissionRules() []AdmissionRule {
 	return append([]AdmissionRule(nil), r.admission...)
 }
 
-func NewDefaultRegistry() *Registry {
-	podConfigMap := NewPodConfigMapRule()
-	servicePod := NewServicePodRule()
-	return &Registry{
-		direct:      []DirectRule{podConfigMap},
-		conditional: []ServiceConditionalRule{servicePod},
-		admission:   []AdmissionRule{podConfigMap, servicePod},
+// NewRegistry classifies concrete rules by their supported validation style.
+func NewRegistry(admissionRules ...AdmissionRule) *Registry {
+	registry := &Registry{admission: append([]AdmissionRule(nil), admissionRules...)}
+	for _, rule := range admissionRules {
+		if direct, ok := rule.(DirectRule); ok {
+			registry.direct = append(registry.direct, direct)
+		}
+		if conditional, ok := rule.(ServiceConditionalRule); ok {
+			registry.conditional = append(registry.conditional, conditional)
+		}
 	}
+	return registry
 }
-
-var DefaultRegistry = NewDefaultRegistry()

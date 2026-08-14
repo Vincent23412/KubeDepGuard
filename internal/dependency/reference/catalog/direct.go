@@ -1,4 +1,4 @@
-// Package catalog assembles the enabled dependency components.
+// Package catalog assembles the reference extractors enabled by default.
 package catalog
 
 import (
@@ -6,6 +6,7 @@ import (
 	"github.com/vincent/KubeDepGuard/internal/dependency/reference/pod"
 )
 
-var DefaultReferenceRegistry = ref.NewRegistry(
+// DefaultDirectRegistry contains every direct-reference field extractor.
+var DefaultDirectRegistry = ref.NewRegistry(
 	pod.NewConfigMapExtractor,
 )

@@ -9,10 +9,9 @@ import (
 	"time"
 
 	"github.com/vincent/KubeDepGuard/internal/dependency"
-	"github.com/vincent/KubeDepGuard/internal/dependency/catalog"
-	serviceRef "github.com/vincent/KubeDepGuard/internal/dependency/reference/service"
 	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
 	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
+	rulecatalog "github.com/vincent/KubeDepGuard/internal/dependency/rules/catalog"
 	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/labels"
@@ -32,25 +31,21 @@ type Controller struct {
 	queue          workqueue.TypedRateLimitingInterface[string]
 	recorder       record.EventRecorder
 	log            *slog.Logger
-	resolver       *resolver.ListerResolver
-	podLister      resolver.PodLister
+	evaluator      *rules.Evaluator
 	ready          chan struct{}
 	readyOnce      sync.Once
 }
 
 func NewWithInformers(pods coreinformers.PodInformer, services coreinformers.ServiceInformer, configMaps coreinformers.ConfigMapInformer, endpointSlices discoveryinformers.EndpointSliceInformer, recorder record.EventRecorder, log *slog.Logger) *Controller {
-	c := &Controller{pods: pods, services: services, configMaps: configMaps, endpointSlices: endpointSlices, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()), recorder: recorder, log: log, resolver: resolver.NewListerResolver(configMaps.Lister()), podLister: resolver.NewInformerPodLister(pods.Lister()), ready: make(chan struct{})}
+	query := resolver.NewListerResolver(pods.Lister(), configMaps.Lister(), services.Lister())
+	c := &Controller{pods: pods, services: services, configMaps: configMaps, endpointSlices: endpointSlices, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()), recorder: recorder, log: log, evaluator: rules.NewEvaluator(query, rulecatalog.DefaultRegistry.AdmissionRules()), ready: make(chan struct{})}
 	pods.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    func(obj any) { c.enqueue("pod", obj); c.enqueueAllServices() },
 		UpdateFunc: func(_, obj any) { c.enqueue("pod", obj); c.enqueueAllServices() },
 		DeleteFunc: func(any) { c.enqueueAllServices() },
 	})
 	services.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueue("service", obj) }, UpdateFunc: func(_, obj any) { c.enqueue("service", obj) }, DeleteFunc: func(obj any) { c.enqueue("service", obj) }})
-	configMaps.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj any) { c.enqueueReferencingPods(obj) },
-		UpdateFunc: func(_, obj any) { c.enqueueReferencingPods(obj) },
-		DeleteFunc: func(obj any) { c.enqueuePodsAffectedByTargetDeletion(obj) },
-	})
+	configMaps.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods() }, DeleteFunc: func(any) { c.enqueueAllPods() }})
 	endpointSlices.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueueEndpointService(obj) }, UpdateFunc: func(_, obj any) { c.enqueueEndpointService(obj) }, DeleteFunc: func(obj any) { c.enqueueEndpointService(obj) }})
 	return c
 }
@@ -113,38 +108,24 @@ func (c *Controller) reconcile(key string) error {
 		if err != nil {
 			return nil
 		}
-		if dependency.ModeFor(pod) == dependency.ModeDisabled {
-			return nil
-		}
-		references, err := catalog.DefaultReferenceRegistry.Extract("Pod", pod)
+		result, err := c.evaluator.Evaluate(rules.Request{Resource: "pods", Operation: rules.Update, Namespace: namespace, Name: name, Object: pod})
 		if err != nil {
 			return err
 		}
-		for _, rule := range rules.DefaultRegistry.DirectReferenceRules() {
-			for _, v := range rule.Validate(pod, references, c.resolver) {
-				c.warn(pod, v)
-			}
+		for _, violation := range result.Violations {
+			c.warn(pod, violation)
 		}
 	case "service":
 		svc, err := c.services.Lister().Services(namespace).Get(name)
 		if err != nil {
 			return nil
 		}
-		if dependency.ModeFor(svc) == dependency.ModeDisabled {
-			return nil
-		}
-		selector, err := serviceRef.NewSelectorExtractor().Extract(svc)
+		result, err := c.evaluator.Evaluate(rules.Request{Resource: "services", Operation: rules.Update, Namespace: namespace, Name: name, Object: svc})
 		if err != nil {
 			return err
 		}
-		for _, rule := range rules.DefaultRegistry.ServiceConditionalRules() {
-			found, err := rule.Validate(svc, selector, c.podLister)
-			if err != nil {
-				return err
-			}
-			for _, v := range found {
-				c.warn(svc, v)
-			}
+		for _, violation := range result.Violations {
+			c.warn(svc, violation)
 		}
 		slices, _ := c.endpointSlices.Lister().EndpointSlices(namespace).List(labels.Everything())
 		if len(svc.Spec.Selector) > 0 && !hasReadyEndpoint(svc, slices) {
@@ -184,58 +165,10 @@ func (c *Controller) enqueueAllServices() {
 }
 
 // enqueueReferencingPods rechecks Pods when a target is created or updated.
-func (c *Controller) enqueueReferencingPods(obj any) {
-	cm, ok := obj.(*corev1.ConfigMap)
-	if !ok {
-		return
-	}
-	pods, _ := c.pods.Lister().Pods(cm.Namespace).List(labels.Everything())
+func (c *Controller) enqueueAllPods() {
+	pods, _ := c.pods.Lister().List(labels.Everything())
 	for _, pod := range pods {
-		references, err := catalog.DefaultReferenceRegistry.Extract("Pod", pod)
-		if err != nil {
-			continue
-		}
-		for _, rule := range rules.DefaultRegistry.DirectReferenceRules() {
-			if rule.TargetKind() != "ConfigMap" {
-				continue
-			}
-			for _, ref := range references {
-				if ref.TargetKind == rule.TargetKind() && ref.Name == cm.Name {
-					c.enqueue("pod", pod)
-					break
-				}
-			}
-		}
-	}
-}
-
-// enqueuePodsAffectedByTargetDeletion delegates reverse-dependency matching to
-// direct rules, mirroring the admission webhook's target deletion flow.
-func (c *Controller) enqueuePodsAffectedByTargetDeletion(obj any) {
-	cm, ok := obj.(*corev1.ConfigMap)
-	if !ok {
-		tombstone, isTombstone := obj.(cache.DeletedFinalStateUnknown)
-		if !isTombstone {
-			return
-		}
-		cm, ok = tombstone.Obj.(*corev1.ConfigMap)
-		if !ok {
-			return
-		}
-	}
-	target := resolver.Target{Kind: "ConfigMap", Namespace: cm.Namespace, Name: cm.Name}
-	pods, _ := c.pods.Lister().Pods(cm.Namespace).List(labels.Everything())
-	for _, pod := range pods {
-		references, err := catalog.DefaultReferenceRegistry.Extract("Pod", pod)
-		if err != nil {
-			continue
-		}
-		for _, rule := range rules.DefaultRegistry.DirectReferenceRules() {
-			if len(rule.ValidateTargetDeletion(pod, references, target)) > 0 {
-				c.enqueue("pod", pod)
-				break
-			}
-		}
+		c.enqueue("pod", pod)
 	}
 }
 func (c *Controller) enqueueEndpointService(obj any) {
@@ -249,9 +182,6 @@ func (c *Controller) enqueueEndpointService(obj any) {
 	}
 }
 func (c *Controller) fullReconcile() {
-	pods, _ := c.pods.Lister().List(labels.Everything())
-	for _, pod := range pods {
-		c.enqueue("pod", pod)
-	}
+	c.enqueueAllPods()
 	c.enqueueAllServices()
 }
