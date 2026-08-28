@@ -9,13 +9,15 @@ import (
 // ListerResolver dispatches collection reads to kind-specific cache listers.
 type ListerResolver struct{ byKind map[string]ResourceLister }
 
-func NewListerResolver(pods corelisters.PodLister, configMaps corelisters.ConfigMapLister, services corelisters.ServiceLister) *ListerResolver {
+func NewListerResolver(pods corelisters.PodLister, configMaps corelisters.ConfigMapLister, secrets corelisters.SecretLister, services corelisters.ServiceLister) *ListerResolver {
 	podResolver := NewPodResolver(pods)
 	configMapResolver := NewConfigMapResolver(configMaps)
+	secretResolver := NewSecretResolver(secrets)
 	serviceResolver := NewServiceResolver(services)
 	return &ListerResolver{byKind: map[string]ResourceLister{
 		podResolver.Kind():       podResolver,
 		configMapResolver.Kind(): configMapResolver,
+		secretResolver.Kind():    secretResolver,
 		serviceResolver.Kind():   serviceResolver,
 	}}
 }

@@ -23,13 +23,15 @@ func NewInformerResolver(client kubernetes.Interface) *InformerResolver {
 	factory := informers.NewSharedInformerFactory(client, 0)
 	pods := factory.Core().V1().Pods()
 	configMaps := factory.Core().V1().ConfigMaps()
+	secrets := factory.Core().V1().Secrets()
 	services := factory.Core().V1().Services()
 	return &InformerResolver{
 		factory: factory,
-		query:   NewListerResolver(pods.Lister(), configMaps.Lister(), services.Lister()),
+		query:   NewListerResolver(pods.Lister(), configMaps.Lister(), secrets.Lister(), services.Lister()),
 		syncers: []cache.InformerSynced{
 			pods.Informer().HasSynced,
 			configMaps.Informer().HasSynced,
+			secrets.Informer().HasSynced,
 			services.Informer().HasSynced,
 		},
 	}

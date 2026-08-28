@@ -9,5 +9,6 @@ import (
 
 var DefaultRegistry = rules.NewRegistry(
 	direct.NewPodConfigMapRule(),
+	direct.NewPodSecretRule(),
 	conditional.NewServicePodRule(),
 )

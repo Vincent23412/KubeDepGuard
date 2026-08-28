@@ -17,6 +17,7 @@ type MonitorInformerResolver struct {
 	factory        informers.SharedInformerFactory
 	pods           coreinformers.PodInformer
 	configMaps     coreinformers.ConfigMapInformer
+	secrets        coreinformers.SecretInformer
 	services       coreinformers.ServiceInformer
 	endpointSlices discoveryinformers.EndpointSliceInformer
 	query          *ListerResolver
@@ -29,18 +30,21 @@ func NewMonitorInformerResolver(client kubernetes.Interface) *MonitorInformerRes
 	factory := informers.NewSharedInformerFactory(client, 0)
 	pods := factory.Core().V1().Pods()
 	configMaps := factory.Core().V1().ConfigMaps()
+	secrets := factory.Core().V1().Secrets()
 	services := factory.Core().V1().Services()
 	endpointSlices := factory.Discovery().V1().EndpointSlices()
 	return &MonitorInformerResolver{
 		factory:        factory,
 		pods:           pods,
 		configMaps:     configMaps,
+		secrets:        secrets,
 		services:       services,
 		endpointSlices: endpointSlices,
-		query:          NewListerResolver(pods.Lister(), configMaps.Lister(), services.Lister()),
+		query:          NewListerResolver(pods.Lister(), configMaps.Lister(), secrets.Lister(), services.Lister()),
 		syncers: []cache.InformerSynced{
 			pods.Informer().HasSynced,
 			configMaps.Informer().HasSynced,
+			secrets.Informer().HasSynced,
 			services.Informer().HasSynced,
 			endpointSlices.Informer().HasSynced,
 		},
@@ -50,6 +54,8 @@ func NewMonitorInformerResolver(client kubernetes.Interface) *MonitorInformerRes
 func (r *MonitorInformerResolver) Pods() coreinformers.PodInformer { return r.pods }
 
 func (r *MonitorInformerResolver) ConfigMaps() coreinformers.ConfigMapInformer { return r.configMaps }
+
+func (r *MonitorInformerResolver) Secrets() coreinformers.SecretInformer { return r.secrets }
 
 func (r *MonitorInformerResolver) Services() coreinformers.ServiceInformer { return r.services }
 

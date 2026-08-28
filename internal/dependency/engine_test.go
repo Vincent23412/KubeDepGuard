@@ -29,6 +29,36 @@ func TestConfigMapReferences(t *testing.T) {
 	}
 }
 
+func TestSecretReferences(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "test"}, Spec: corev1.PodSpec{
+		ImagePullSecrets: []corev1.LocalObjectReference{{Name: "pull"}},
+		Volumes: []corev1.Volume{
+			{Name: "secret", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "volume"}}},
+			{Name: "projected", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{Sources: []corev1.VolumeProjection{{Secret: &corev1.SecretProjection{LocalObjectReference: corev1.LocalObjectReference{Name: "projected"}}}}}}},
+		},
+		Containers: []corev1.Container{{
+			EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "all-env"}}}},
+			Env:     []corev1.EnvVar{{ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "one-env"}, Key: "token"}}}},
+		}},
+	}}
+	references, err := referencecatalog.DefaultDirectRegistry.Extract("Pod", pod)
+	if err != nil {
+		t.Fatalf("extract references: %v", err)
+	}
+	var secrets []ref.Reference
+	for _, reference := range references {
+		if reference.TargetKind == "Secret" {
+			secrets = append(secrets, reference)
+		}
+	}
+	if got := len(secrets); got != 5 {
+		t.Fatalf("Secret references = %d, want 5", got)
+	}
+	if secrets[0].FieldPath == "" || secrets[0].Namespace != "test" {
+		t.Fatalf("reference missing source metadata: %#v", secrets[0])
+	}
+}
+
 func TestServiceHasMatchingPod(t *testing.T) {
 	svc := &corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: "test"}, Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}}}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "test", Labels: map[string]string{"app": "api"}}}
@@ -49,11 +79,35 @@ func (testQuery) List(resolver.ResourceScope) ([]resolver.Resource, error) { ret
 var _ resolver.Query = testQuery{}
 
 func TestDefaultRegistryCategories(t *testing.T) {
-	if got := len(rulecatalog.DefaultRegistry.DirectReferenceRules()); got != 1 {
-		t.Fatalf("direct rule count = %d, want 1", got)
+	if got := len(rulecatalog.DefaultRegistry.DirectReferenceRules()); got != 2 {
+		t.Fatalf("direct rule count = %d, want 2", got)
 	}
 	if got := len(rulecatalog.DefaultRegistry.ServiceConditionalRules()); got != 1 {
 		t.Fatalf("conditional rule count = %d, want 1", got)
+	}
+}
+
+func TestEvaluatorRejectsEnforcePodWithMissingSecret(t *testing.T) {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        "api",
+			Namespace:   "test",
+			Annotations: map[string]string{dependency.PolicyAnnotation: string(dependency.ModeEnforce)},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name: "app",
+			EnvFrom: []corev1.EnvFromSource{{
+				SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "missing"}},
+			}},
+		}}},
+	}
+	evaluator := rules.NewEvaluator(testQuery{}, rulecatalog.DefaultRegistry.AdmissionRules())
+	result, err := evaluator.Evaluate(rules.Request{Resource: "pods", Operation: rules.Create, Namespace: pod.Namespace, Name: pod.Name, Object: pod})
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if !result.Reject || len(result.Violations) != 1 || result.Violations[0].Rule != "MissingSecret" {
+		t.Fatalf("result = %#v, want one MissingSecret rejection", result)
 	}
 }
 
@@ -89,6 +143,18 @@ func TestPodConfigMapRuleRejectsReferencedTargetDeletion(t *testing.T) {
 		t.Fatalf("violations = %d, want 1", got)
 	}
 	if violations[0].Rule != "ReferencedConfigMapDeletion" {
+		t.Fatalf("rule = %q", violations[0].Rule)
+	}
+}
+
+func TestPodSecretRuleRejectsReferencedTargetDeletion(t *testing.T) {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test"}}
+	refs := []ref.Reference{{SourceKind: "Pod", TargetKind: "Secret", Namespace: "test", Name: "credentials"}}
+	violations := direct.NewPodSecretRule().ValidateTargetDeletion(pod, refs, resolver.ResourceScope{Kind: "Secret", Namespace: "test"}, "credentials")
+	if got := len(violations); got != 1 {
+		t.Fatalf("violations = %d, want 1", got)
+	}
+	if violations[0].Rule != "ReferencedSecretDeletion" {
 		t.Fatalf("rule = %q", violations[0].Rule)
 	}
 }

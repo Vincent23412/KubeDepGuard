@@ -9,4 +9,5 @@ import (
 // DefaultDirectRegistry contains every direct-reference field extractor.
 var DefaultDirectRegistry = ref.NewRegistry(
 	pod.NewConfigMapExtractor,
+	pod.NewSecretExtractor,
 )

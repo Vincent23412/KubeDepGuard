@@ -12,11 +12,16 @@ type Resource = lister.Resource
 type ResourceLister = lister.ResourceLister
 type ListerResolver = lister.ListerResolver
 type ConfigMapResolver = lister.ConfigMapResolver
+type SecretResolver = lister.SecretResolver
 type PodResolver = lister.PodResolver
 type ServiceResolver = lister.ServiceResolver
 
-func NewListerResolver(pods corelisters.PodLister, configMaps corelisters.ConfigMapLister, services corelisters.ServiceLister) *ListerResolver {
-	return lister.NewListerResolver(pods, configMaps, services)
+func NewListerResolver(pods corelisters.PodLister, configMaps corelisters.ConfigMapLister, secrets corelisters.SecretLister, services corelisters.ServiceLister) *ListerResolver {
+	return lister.NewListerResolver(pods, configMaps, secrets, services)
+}
+
+func NewSecretResolver(secrets corelisters.SecretLister) *SecretResolver {
+	return lister.NewSecretResolver(secrets)
 }
 
 func NewConfigMapResolver(configMaps corelisters.ConfigMapLister) *ConfigMapResolver {

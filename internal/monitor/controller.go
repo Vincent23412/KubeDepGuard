@@ -40,6 +40,7 @@ func New(informers *resolver.MonitorInformerResolver, recorder record.EventRecor
 	pods := informers.Pods()
 	services := informers.Services()
 	configMaps := informers.ConfigMaps()
+	secrets := informers.Secrets()
 	endpointSlices := informers.EndpointSlices()
 	c := &Controller{pods: pods, services: services, configMaps: configMaps, endpointSlices: endpointSlices, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()), recorder: recorder, log: log, evaluator: rules.NewEvaluator(informers, rulecatalog.DefaultRegistry.AdmissionRules()), ready: make(chan struct{})}
 	pods.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
@@ -49,6 +50,7 @@ func New(informers *resolver.MonitorInformerResolver, recorder record.EventRecor
 	})
 	services.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueue("service", obj) }, UpdateFunc: func(_, obj any) { c.enqueue("service", obj) }, DeleteFunc: func(obj any) { c.enqueue("service", obj) }})
 	configMaps.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods() }, DeleteFunc: func(any) { c.enqueueAllPods() }})
+	secrets.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods() }, DeleteFunc: func(any) { c.enqueueAllPods() }})
 	endpointSlices.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueueEndpointService(obj) }, UpdateFunc: func(_, obj any) { c.enqueueEndpointService(obj) }, DeleteFunc: func(obj any) { c.enqueueEndpointService(obj) }})
 	return c
 }
