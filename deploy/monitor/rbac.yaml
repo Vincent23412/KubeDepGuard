@@ -10,7 +10,10 @@ metadata:
   name: kube-dep-guard-monitor
 rules:
   - apiGroups: [""]
-    resources: ["pods", "configmaps", "secrets", "services"]
+    resources: ["pods", "configmaps", "secrets", "persistentvolumeclaims", "services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["discovery.k8s.io"]
     resources: ["endpointslices"]

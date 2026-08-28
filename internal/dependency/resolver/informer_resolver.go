@@ -21,17 +21,21 @@ type InformerResolver struct {
 // dependency rule registry. Call Start before evaluating requests.
 func NewInformerResolver(client kubernetes.Interface) *InformerResolver {
 	factory := informers.NewSharedInformerFactory(client, 0)
+	deployments := factory.Apps().V1().Deployments()
 	pods := factory.Core().V1().Pods()
 	configMaps := factory.Core().V1().ConfigMaps()
 	secrets := factory.Core().V1().Secrets()
+	pvcs := factory.Core().V1().PersistentVolumeClaims()
 	services := factory.Core().V1().Services()
 	return &InformerResolver{
 		factory: factory,
-		query:   NewListerResolver(pods.Lister(), configMaps.Lister(), secrets.Lister(), services.Lister()),
+		query:   NewListerResolver(deployments.Lister(), pods.Lister(), configMaps.Lister(), secrets.Lister(), pvcs.Lister(), services.Lister()),
 		syncers: []cache.InformerSynced{
+			deployments.Informer().HasSynced,
 			pods.Informer().HasSynced,
 			configMaps.Informer().HasSynced,
 			secrets.Informer().HasSynced,
+			pvcs.Informer().HasSynced,
 			services.Informer().HasSynced,
 		},
 	}

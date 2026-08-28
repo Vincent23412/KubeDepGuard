@@ -9,6 +9,7 @@ import (
 
 	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
 	admissionv1 "k8s.io/api/admission/v1"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -84,6 +85,12 @@ func newRuleRequest(req *admissionv1.AdmissionRequest) (rules.Request, error) {
 			return rules.Request{}, fmt.Errorf("decode Service: %w", err)
 		}
 		request.Object = service
+	case "deployments":
+		deployment := &appsv1.Deployment{}
+		if err := json.Unmarshal(req.Object.Raw, deployment); err != nil {
+			return rules.Request{}, fmt.Errorf("decode Deployment: %w", err)
+		}
+		request.Object = deployment
 	}
 	return request, nil
 }

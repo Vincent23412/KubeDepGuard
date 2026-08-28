@@ -24,5 +24,10 @@ webhooks:
       - operations: ["CREATE", "UPDATE", "DELETE"]
         apiGroups: [""]
         apiVersions: ["v1"]
-        resources: ["pods", "configmaps", "secrets", "services"]
+        resources: ["pods", "configmaps", "secrets", "persistentvolumeclaims", "services"]
+        scope: "Namespaced"
+      - operations: ["CREATE", "UPDATE"]
+        apiGroups: ["apps"]
+        apiVersions: ["v1"]
+        resources: ["deployments"]
         scope: "Namespaced"

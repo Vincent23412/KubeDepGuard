@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"k8s.io/client-go/informers"
+	appsinformers "k8s.io/client-go/informers/apps/v1"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	discoveryinformers "k8s.io/client-go/informers/discovery/v1"
 	"k8s.io/client-go/kubernetes"
@@ -15,9 +16,11 @@ import (
 // by the monitor. It also exposes the same cache-backed Query used by rules.
 type MonitorInformerResolver struct {
 	factory        informers.SharedInformerFactory
+	deployments    appsinformers.DeploymentInformer
 	pods           coreinformers.PodInformer
 	configMaps     coreinformers.ConfigMapInformer
 	secrets        coreinformers.SecretInformer
+	pvcs           coreinformers.PersistentVolumeClaimInformer
 	services       coreinformers.ServiceInformer
 	endpointSlices discoveryinformers.EndpointSliceInformer
 	query          *ListerResolver
@@ -28,27 +31,37 @@ type MonitorInformerResolver struct {
 // so callers can register event handlers before the factory begins running.
 func NewMonitorInformerResolver(client kubernetes.Interface) *MonitorInformerResolver {
 	factory := informers.NewSharedInformerFactory(client, 0)
+	deployments := factory.Apps().V1().Deployments()
 	pods := factory.Core().V1().Pods()
 	configMaps := factory.Core().V1().ConfigMaps()
 	secrets := factory.Core().V1().Secrets()
+	pvcs := factory.Core().V1().PersistentVolumeClaims()
 	services := factory.Core().V1().Services()
 	endpointSlices := factory.Discovery().V1().EndpointSlices()
 	return &MonitorInformerResolver{
 		factory:        factory,
+		deployments:    deployments,
 		pods:           pods,
 		configMaps:     configMaps,
 		secrets:        secrets,
+		pvcs:           pvcs,
 		services:       services,
 		endpointSlices: endpointSlices,
-		query:          NewListerResolver(pods.Lister(), configMaps.Lister(), secrets.Lister(), services.Lister()),
+		query:          NewListerResolver(deployments.Lister(), pods.Lister(), configMaps.Lister(), secrets.Lister(), pvcs.Lister(), services.Lister()),
 		syncers: []cache.InformerSynced{
+			deployments.Informer().HasSynced,
 			pods.Informer().HasSynced,
 			configMaps.Informer().HasSynced,
 			secrets.Informer().HasSynced,
+			pvcs.Informer().HasSynced,
 			services.Informer().HasSynced,
 			endpointSlices.Informer().HasSynced,
 		},
 	}
+}
+
+func (r *MonitorInformerResolver) Deployments() appsinformers.DeploymentInformer {
+	return r.deployments
 }
 
 func (r *MonitorInformerResolver) Pods() coreinformers.PodInformer { return r.pods }
@@ -56,6 +69,10 @@ func (r *MonitorInformerResolver) Pods() coreinformers.PodInformer { return r.po
 func (r *MonitorInformerResolver) ConfigMaps() coreinformers.ConfigMapInformer { return r.configMaps }
 
 func (r *MonitorInformerResolver) Secrets() coreinformers.SecretInformer { return r.secrets }
+
+func (r *MonitorInformerResolver) PersistentVolumeClaims() coreinformers.PersistentVolumeClaimInformer {
+	return r.pvcs
+}
 
 func (r *MonitorInformerResolver) Services() coreinformers.ServiceInformer { return r.services }
 
