@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pending-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: kube-dep-guard-no-such-class
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: warn-pod-pvc-pending
+  annotations:
+    dependency.kubedepguard.io/mode: warn
+spec:
+  containers:
+    - name: app
+      image: nginx:stable
+      volumeMounts:
+        - name: data
+          mountPath: /var/lib/app
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        # PVC 尚未 Bound；mode=warn 會放行，但 Monitor 會產生 Warning Event。
+        claimName: pending-data

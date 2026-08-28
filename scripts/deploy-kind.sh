@@ -43,3 +43,5 @@ kubectl -n "$namespace" rollout status deployment/kube-dep-guard-webhook --timeo
 kubectl apply -f deploy/webhook/validating-webhook.yaml
 ca_bundle=$(base64 <"$tmp_dir/ca.crt" | tr -d '\n')
 kubectl patch validatingwebhookconfiguration kube-dep-guard --type=json -p="[{\"op\":\"replace\",\"path\":\"/webhooks/0/clientConfig/caBundle\",\"value\":\"${ca_bundle}\"}]"
+kubectl -n "$namespace" rollout restart deployment/kube-dep-guard-monitor
+kubectl -n "$namespace" rollout status deployment/kube-dep-guard-monitor --timeout=120s

@@ -15,7 +15,7 @@ cleanup() {
 	# the temporary namespace terminating.
 	kubectl -n "$test_namespace" delete services --all --ignore-not-found --wait=true >/dev/null 2>&1 || true
 	kubectl -n "$test_namespace" delete pods --all --ignore-not-found --wait=true >/dev/null 2>&1 || true
-	kubectl -n "$test_namespace" delete configmaps,secrets --all --ignore-not-found --wait=true >/dev/null 2>&1 || true
+	kubectl -n "$test_namespace" delete configmaps,secrets,persistentvolumeclaims --all --ignore-not-found --wait=true >/dev/null 2>&1 || true
 	kubectl delete namespace "$test_namespace" --ignore-not-found --wait=true --timeout=60s >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
@@ -62,12 +62,32 @@ kubectl -n kube-dep-guard-system rollout status deployment/kube-dep-guard-monito
 
 kubectl create namespace "$test_namespace"
 namespace_created=true
+# The namespaceSelector is evaluated from the API server's namespace cache.
+# Wait until the automatically assigned label is observable before sending the
+# first admission request, otherwise the first request can be skipped while
+# the newly created namespace is still propagating through that cache.
+namespace_deadline=$((SECONDS + 30))
+while (( SECONDS < namespace_deadline )); do
+	if [[ "$(kubectl get namespace "$test_namespace" -o jsonpath='{.metadata.labels.kubernetes\.io/metadata\.name}' 2>/dev/null)" == "$test_namespace" ]]; then
+		break
+	fi
+	sleep 1
+done
+if [[ "$(kubectl get namespace "$test_namespace" -o jsonpath='{.metadata.labels.kubernetes\.io/metadata\.name}' 2>/dev/null)" != "$test_namespace" ]]; then
+	fail "namespace selector label did not become available"
+fi
+sleep 2
 
 expect_rejected "enforce Pod with missing ConfigMap" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-configmap.yaml
+expect_rejected "enforce Deployment with missing ConfigMap" kubectl -n "$test_namespace" apply -f examples/failures/enforce-deployment-missing-configmap.yaml
 expect_rejected "enforce Pod with missing Secret" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-secret.yaml
+expect_rejected "enforce Pod with missing PVC" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-pvc.yaml
 
 kubectl -n "$test_namespace" apply -f examples/failures/warn-pod-missing-configmap.yaml
 wait_for_event "MissingConfigMap" "warn-pod-missing-configmap"
+
+kubectl -n "$test_namespace" apply -f examples/failures/warn-pod-pvc-pending.yaml
+wait_for_event "PersistentVolumeClaimNotBound" "warn-pod-pvc-pending"
 
 expect_rejected "enforce Service with an empty selector" kubectl -n "$test_namespace" apply -f examples/failures/enforce-service-empty-selector.yaml
 

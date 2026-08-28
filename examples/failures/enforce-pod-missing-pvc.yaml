@@ -1,0 +1,19 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: enforce-pod-missing-pvc
+  annotations:
+    dependency.kubedepguard.io/mode: enforce
+spec:
+  containers:
+    - name: app
+      image: nginx:stable
+      volumeMounts:
+        - name: data
+          mountPath: /var/lib/app
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        # 錯誤：此 PVC 不存在，觸發 MissingPersistentVolumeClaim。
+        # mode=enforce，因此 Admission Webhook 會拒絕整個 Pod 建立請求。
+        claimName: does-not-exist

@@ -1,0 +1,24 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enforce-deployment-missing-configmap
+  annotations:
+    dependency.kubedepguard.io/mode: enforce
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: missing-config
+  template:
+    metadata:
+      labels:
+        app: missing-config
+    spec:
+      containers:
+        - name: app
+          image: nginx:stable
+          envFrom:
+            - configMapRef:
+                # 錯誤：Deployment template 引用的 ConfigMap 不存在。
+                # Webhook 在 Deployment 建立前就會拒絕請求。
+                name: does-not-exist
