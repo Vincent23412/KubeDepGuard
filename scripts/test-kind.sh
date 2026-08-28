@@ -82,6 +82,10 @@ expect_rejected "enforce Pod with missing ConfigMap" kubectl -n "$test_namespace
 expect_rejected "enforce Deployment with missing ConfigMap" kubectl -n "$test_namespace" apply -f examples/failures/enforce-deployment-missing-configmap.yaml
 expect_rejected "enforce Pod with missing Secret" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-secret.yaml
 expect_rejected "enforce Pod with missing PVC" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-pvc.yaml
+expect_rejected "enforce Pod with missing ConfigMap key" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-configmap-key.yaml
+expect_rejected "enforce Pod with missing Secret key" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-secret-key.yaml
+expect_rejected "enforce Pod with missing ServiceAccount" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-serviceaccount.yaml
+expect_rejected "enforce Pod with missing Node" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-node.yaml
 
 kubectl -n "$test_namespace" apply -f examples/failures/warn-pod-missing-configmap.yaml
 wait_for_event "MissingConfigMap" "warn-pod-missing-configmap"
@@ -90,6 +94,8 @@ kubectl -n "$test_namespace" apply -f examples/failures/warn-pod-pvc-pending.yam
 wait_for_event "PersistentVolumeClaimNotBound" "warn-pod-pvc-pending"
 
 expect_rejected "enforce Service with an empty selector" kubectl -n "$test_namespace" apply -f examples/failures/enforce-service-empty-selector.yaml
+expect_rejected "enforce Ingress with missing Service" kubectl -n "$test_namespace" apply -f examples/failures/enforce-ingress-missing-service.yaml
+expect_rejected "enforce Ingress with missing Service port" kubectl -n "$test_namespace" apply -f examples/failures/enforce-ingress-missing-service-port.yaml
 
 kubectl -n "$test_namespace" apply -f examples/failures/enforce-configmap-delete-setup.yaml
 expect_rejected "deleting ConfigMap referenced by enforce Pod" kubectl -n "$test_namespace" delete configmap protected-config

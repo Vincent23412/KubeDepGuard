@@ -46,6 +46,11 @@ func (r WorkloadConfigMapRule) Evaluate(request rules.Request, query resolver.Qu
 			return rules.Result{}, err
 		}
 		violations := r.missing(source, references, available)
+		keyViolations, err := r.missingKeys(source, references, query)
+		if err != nil {
+			return rules.Result{}, err
+		}
+		violations = append(violations, keyViolations...)
 		return rules.Result{Violations: violations, Reject: len(violations) > 0 && dependency.ModeFor(source) == dependency.ModeEnforce}, nil
 	case request.Resource == "configmaps":
 		var violations []dependency.Violation

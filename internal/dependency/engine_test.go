@@ -22,7 +22,13 @@ func TestConfigMapReferences(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extract references: %v", err)
 	}
-	if got := len(references); got != 3 {
+	configMapReferences := 0
+	for _, reference := range references {
+		if reference.TargetKind == "ConfigMap" {
+			configMapReferences++
+		}
+	}
+	if got := configMapReferences; got != 3 {
 		t.Fatalf("references = %d, want 3", got)
 	}
 	if references[0].TargetKind != "ConfigMap" || references[0].FieldPath == "" {
@@ -88,7 +94,7 @@ func TestDeploymentConfigMapReferences(t *testing.T) {
 	if err != nil {
 		t.Fatalf("extract references: %v", err)
 	}
-	if len(references) != 1 || references[0].SourceKind != "Deployment" || references[0].Name != "app-config" {
+	if len(references) < 1 || references[0].SourceKind != "Deployment" || references[0].Name != "app-config" {
 		t.Fatalf("references = %#v, want one Deployment ConfigMap reference", references)
 	}
 	if references[0].FieldPath != "spec.template.spec.containers[0].envFrom[0].configMapRef.name" {
@@ -111,7 +117,12 @@ func TestServiceHasMatchingPod(t *testing.T) {
 
 type testQuery struct{}
 
-func (testQuery) List(resolver.ResourceScope) ([]resolver.Resource, error) { return nil, nil }
+func (testQuery) List(scope resolver.ResourceScope) ([]resolver.Resource, error) {
+	if scope.Kind == "ServiceAccount" {
+		return []resolver.Resource{&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: scope.Namespace}}}, nil
+	}
+	return nil, nil
+}
 
 var _ resolver.Query = testQuery{}
 
@@ -151,8 +162,14 @@ func TestEvaluatorRejectsEnforcePodWithMissingSecret(t *testing.T) {
 type pvcQuery struct{ pvc *corev1.PersistentVolumeClaim }
 
 func (q pvcQuery) List(scope resolver.ResourceScope) ([]resolver.Resource, error) {
+	if scope.Kind == "ServiceAccount" {
+		return []resolver.Resource{&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: scope.Namespace}}}, nil
+	}
 	if scope.Kind == "PersistentVolumeClaim" && q.pvc != nil {
 		return []resolver.Resource{q.pvc}, nil
+	}
+	if scope.Kind == "PersistentVolume" && q.pvc != nil && q.pvc.Spec.VolumeName != "" {
+		return []resolver.Resource{&corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: q.pvc.Spec.VolumeName}, Status: corev1.PersistentVolumeStatus{Phase: corev1.VolumeBound}}}, nil
 	}
 	return nil, nil
 }
@@ -175,7 +192,7 @@ func TestEvaluatorAllowsEnforcePodWithBoundPVC(t *testing.T) {
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test", Annotations: map[string]string{dependency.PolicyAnnotation: string(dependency.ModeEnforce)}}, Spec: corev1.PodSpec{Volumes: []corev1.Volume{{
 		Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data-pvc"}},
 	}}, Containers: []corev1.Container{{Name: "app"}}}}
-	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data-pvc", Namespace: "test"}, Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound}}
+	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data-pvc", Namespace: "test"}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: "data-pv"}, Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound}}
 	result, err := rules.NewEvaluator(pvcQuery{pvc: pvc}, rulecatalog.DefaultRegistry.AdmissionRules()).Evaluate(rules.Request{Resource: "pods", Operation: rules.Create, Namespace: "test", Name: "api", Object: pod})
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)

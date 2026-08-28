@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: enforce-pod-missing-node
+  annotations:
+    dependency.kubedepguard.io/mode: enforce
+spec:
+  # 錯誤：此 Node 不存在，Pod 無法排程到指定節點。
+  nodeName: kube-dep-guard-node-does-not-exist
+  containers:
+    - name: app
+      image: nginx:stable

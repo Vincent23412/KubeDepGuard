@@ -18,6 +18,7 @@ import (
 	appsinformers "k8s.io/client-go/informers/apps/v1"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	discoveryinformers "k8s.io/client-go/informers/discovery/v1"
+	networkinginformers "k8s.io/client-go/informers/networking/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/workqueue"
@@ -25,6 +26,7 @@ import (
 
 type Controller struct {
 	deployments    appsinformers.DeploymentInformer
+	ingresses      networkinginformers.IngressInformer
 	pods           coreinformers.PodInformer
 	services       coreinformers.ServiceInformer
 	configMaps     coreinformers.ConfigMapInformer
@@ -46,8 +48,13 @@ func New(informers *resolver.MonitorInformerResolver, recorder record.EventRecor
 	pvcs := informers.PersistentVolumeClaims()
 	endpointSlices := informers.EndpointSlices()
 	deployments := informers.Deployments()
-	c := &Controller{deployments: deployments, pods: pods, services: services, configMaps: configMaps, endpointSlices: endpointSlices, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()), recorder: recorder, log: log, evaluator: rules.NewEvaluator(informers, rulecatalog.DefaultRegistry.AdmissionRules()), ready: make(chan struct{})}
+	ingresses := informers.Ingresses()
+	serviceAccounts := informers.ServiceAccounts()
+	nodes := informers.Nodes()
+	pvs := informers.PersistentVolumes()
+	c := &Controller{deployments: deployments, ingresses: ingresses, pods: pods, services: services, configMaps: configMaps, endpointSlices: endpointSlices, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()), recorder: recorder, log: log, evaluator: rules.NewEvaluator(informers, rulecatalog.DefaultRegistry.AdmissionRules()), ready: make(chan struct{})}
 	deployments.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueue("deployment", obj) }, UpdateFunc: func(_, obj any) { c.enqueue("deployment", obj) }})
+	ingresses.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueue("ingress", obj) }, UpdateFunc: func(_, obj any) { c.enqueue("ingress", obj) }})
 	pods.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc:    func(obj any) { c.enqueue("pod", obj); c.enqueueAllServices() },
 		UpdateFunc: func(_, obj any) { c.enqueue("pod", obj); c.enqueueAllServices() },
@@ -57,6 +64,9 @@ func New(informers *resolver.MonitorInformerResolver, recorder record.EventRecor
 	configMaps.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }})
 	secrets.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }})
 	pvcs.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }})
+	serviceAccounts.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }})
+	nodes.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods() }, DeleteFunc: func(any) { c.enqueueAllPods() }})
+	pvs.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }})
 	endpointSlices.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueueEndpointService(obj) }, UpdateFunc: func(_, obj any) { c.enqueueEndpointService(obj) }, DeleteFunc: func(obj any) { c.enqueueEndpointService(obj) }})
 	return c
 }
@@ -134,6 +144,18 @@ func (c *Controller) reconcile(key string) error {
 		}
 		for _, violation := range result.Violations {
 			c.warn(deployment, violation)
+		}
+	case "ingress":
+		ingress, err := c.ingresses.Lister().Ingresses(namespace).Get(name)
+		if err != nil {
+			return nil
+		}
+		result, err := c.evaluator.Evaluate(rules.Request{Resource: "ingresses", Operation: rules.Update, Namespace: namespace, Name: name, Object: ingress})
+		if err != nil {
+			return err
+		}
+		for _, violation := range result.Violations {
+			c.warn(ingress, violation)
 		}
 	case "service":
 		svc, err := c.services.Lister().Services(namespace).Get(name)

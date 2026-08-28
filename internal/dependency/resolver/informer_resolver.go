@@ -27,9 +27,13 @@ func NewInformerResolver(client kubernetes.Interface) *InformerResolver {
 	secrets := factory.Core().V1().Secrets()
 	pvcs := factory.Core().V1().PersistentVolumeClaims()
 	services := factory.Core().V1().Services()
+	serviceAccounts := factory.Core().V1().ServiceAccounts()
+	nodes := factory.Core().V1().Nodes()
+	pvs := factory.Core().V1().PersistentVolumes()
+	ingresses := factory.Networking().V1().Ingresses()
 	return &InformerResolver{
 		factory: factory,
-		query:   NewListerResolver(deployments.Lister(), pods.Lister(), configMaps.Lister(), secrets.Lister(), pvcs.Lister(), services.Lister()),
+		query:   NewListerResolver(deployments.Lister(), pods.Lister(), configMaps.Lister(), secrets.Lister(), pvcs.Lister(), services.Lister(), serviceAccounts.Lister(), nodes.Lister(), pvs.Lister(), ingresses.Lister()),
 		syncers: []cache.InformerSynced{
 			deployments.Informer().HasSynced,
 			pods.Informer().HasSynced,
@@ -37,6 +41,10 @@ func NewInformerResolver(client kubernetes.Interface) *InformerResolver {
 			secrets.Informer().HasSynced,
 			pvcs.Informer().HasSynced,
 			services.Informer().HasSynced,
+			serviceAccounts.Informer().HasSynced,
+			nodes.Informer().HasSynced,
+			pvs.Informer().HasSynced,
+			ingresses.Informer().HasSynced,
 		},
 	}
 }

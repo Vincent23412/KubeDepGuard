@@ -31,3 +31,8 @@ webhooks:
         apiVersions: ["v1"]
         resources: ["deployments"]
         scope: "Namespaced"
+      - operations: ["CREATE", "UPDATE"]
+        apiGroups: ["networking.k8s.io"]
+        apiVersions: ["v1"]
+        resources: ["ingresses"]
+        scope: "Namespaced"

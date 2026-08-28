@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingress-backend
+spec:
+  selector:
+    app: ingress-backend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: enforce-ingress-missing-service-port
+  annotations:
+    dependency.kubedepguard.io/mode: enforce
+spec:
+  rules:
+    - host: missing-port.example.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ingress-backend
+                port:
+                  # 錯誤：Service 存在，但 port 80 不存在。
+                  number: 80

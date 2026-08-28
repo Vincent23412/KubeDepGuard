@@ -52,6 +52,16 @@ func (r WorkloadPersistentVolumeClaimRule) Evaluate(request rules.Request, query
 				byName[pvc.Name] = pvc
 			}
 		}
+		pvs, err := query.List(resolver.ResourceScope{Kind: "PersistentVolume"})
+		if err != nil {
+			return rules.Result{}, err
+		}
+		byPVName := make(map[string]*corev1.PersistentVolume, len(pvs))
+		for _, resource := range pvs {
+			if pv, ok := resource.(*corev1.PersistentVolume); ok {
+				byPVName[pv.Name] = pv
+			}
+		}
 		violations := make([]dependency.Violation, 0)
 		for _, reference := range references {
 			if reference.TargetKind != r.TargetKind() {
@@ -66,6 +76,10 @@ func (r WorkloadPersistentVolumeClaimRule) Evaluate(request rules.Request, query
 				violations = append(violations, dependency.Violation{Rule: "UnavailablePersistentVolumeClaim", Resource: source.GetNamespace() + "/" + source.GetName(), Message: fmt.Sprintf("references PersistentVolumeClaim %q at %s which is being deleted", reference.Name, reference.FieldPath)})
 			} else if pvc.Status.Phase != corev1.ClaimBound {
 				violations = append(violations, dependency.Violation{Rule: "PersistentVolumeClaimNotBound", Resource: source.GetNamespace() + "/" + source.GetName(), Message: fmt.Sprintf("references PersistentVolumeClaim %q at %s which is not Bound (phase %s)", reference.Name, reference.FieldPath, pvc.Status.Phase)})
+			} else if pvc.Spec.VolumeName == "" {
+				violations = append(violations, dependency.Violation{Rule: "PersistentVolumeUnavailable", Resource: source.GetNamespace() + "/" + source.GetName(), Message: fmt.Sprintf("references PersistentVolumeClaim %q which is Bound without a PersistentVolume", reference.Name)})
+			} else if pv := byPVName[pvc.Spec.VolumeName]; pv == nil || pv.Status.Phase != corev1.VolumeBound || pv.DeletionTimestamp != nil {
+				violations = append(violations, dependency.Violation{Rule: "PersistentVolumeUnavailable", Resource: source.GetNamespace() + "/" + source.GetName(), Message: fmt.Sprintf("references PersistentVolumeClaim %q whose PersistentVolume %q is unavailable", reference.Name, pvc.Spec.VolumeName)})
 			}
 		}
 		return rules.Result{Violations: violations, Reject: len(violations) > 0 && dependency.ModeFor(source) == dependency.ModeEnforce}, nil

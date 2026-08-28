@@ -11,6 +11,7 @@ import (
 	admissionv1 "k8s.io/api/admission/v1"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -91,6 +92,12 @@ func newRuleRequest(req *admissionv1.AdmissionRequest) (rules.Request, error) {
 			return rules.Request{}, fmt.Errorf("decode Deployment: %w", err)
 		}
 		request.Object = deployment
+	case "ingresses":
+		ingress := &networkingv1.Ingress{}
+		if err := json.Unmarshal(req.Object.Raw, ingress); err != nil {
+			return rules.Request{}, fmt.Errorf("decode Ingress: %w", err)
+		}
+		request.Object = ingress
 	}
 	return request, nil
 }

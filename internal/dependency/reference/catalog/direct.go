@@ -3,6 +3,7 @@ package catalog
 
 import (
 	ref "github.com/vincent/KubeDepGuard/internal/dependency/reference"
+	"github.com/vincent/KubeDepGuard/internal/dependency/reference/ingress"
 	"github.com/vincent/KubeDepGuard/internal/dependency/reference/workload"
 )
 
@@ -14,4 +15,8 @@ var DefaultDirectRegistry = ref.NewRegistry(
 	workload.NewDeploymentConfigMapExtractor,
 	workload.NewDeploymentSecretExtractor,
 	workload.NewDeploymentPersistentVolumeClaimExtractor,
+	workload.NewPodServiceAccountExtractor,
+	workload.NewDeploymentServiceAccountExtractor,
+	workload.NewPodNodeExtractor,
+	ingress.NewServiceExtractor,
 )

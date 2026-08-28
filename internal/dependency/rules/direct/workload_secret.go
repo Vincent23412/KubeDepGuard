@@ -46,6 +46,11 @@ func (r WorkloadSecretRule) Evaluate(request rules.Request, query resolver.Query
 			return rules.Result{}, err
 		}
 		violations := r.missing(source, references, available)
+		keyViolations, err := r.missingKeys(source, references, query)
+		if err != nil {
+			return rules.Result{}, err
+		}
+		violations = append(violations, keyViolations...)
 		return rules.Result{Violations: violations, Reject: len(violations) > 0 && dependency.ModeFor(source) == dependency.ModeEnforce}, nil
 	case request.Resource == "secrets":
 		var violations []dependency.Violation

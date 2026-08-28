@@ -8,6 +8,7 @@ import (
 	appsinformers "k8s.io/client-go/informers/apps/v1"
 	coreinformers "k8s.io/client-go/informers/core/v1"
 	discoveryinformers "k8s.io/client-go/informers/discovery/v1"
+	networkinginformers "k8s.io/client-go/informers/networking/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
 )
@@ -15,16 +16,20 @@ import (
 // MonitorInformerResolver owns the informer lifecycle and event sources used
 // by the monitor. It also exposes the same cache-backed Query used by rules.
 type MonitorInformerResolver struct {
-	factory        informers.SharedInformerFactory
-	deployments    appsinformers.DeploymentInformer
-	pods           coreinformers.PodInformer
-	configMaps     coreinformers.ConfigMapInformer
-	secrets        coreinformers.SecretInformer
-	pvcs           coreinformers.PersistentVolumeClaimInformer
-	services       coreinformers.ServiceInformer
-	endpointSlices discoveryinformers.EndpointSliceInformer
-	query          *ListerResolver
-	syncers        []cache.InformerSynced
+	factory         informers.SharedInformerFactory
+	deployments     appsinformers.DeploymentInformer
+	pods            coreinformers.PodInformer
+	configMaps      coreinformers.ConfigMapInformer
+	secrets         coreinformers.SecretInformer
+	pvcs            coreinformers.PersistentVolumeClaimInformer
+	services        coreinformers.ServiceInformer
+	serviceAccounts coreinformers.ServiceAccountInformer
+	nodes           coreinformers.NodeInformer
+	pvs             coreinformers.PersistentVolumeInformer
+	ingresses       networkinginformers.IngressInformer
+	endpointSlices  discoveryinformers.EndpointSliceInformer
+	query           *ListerResolver
+	syncers         []cache.InformerSynced
 }
 
 // NewMonitorInformerResolver materializes every monitor informer before Start
@@ -37,17 +42,25 @@ func NewMonitorInformerResolver(client kubernetes.Interface) *MonitorInformerRes
 	secrets := factory.Core().V1().Secrets()
 	pvcs := factory.Core().V1().PersistentVolumeClaims()
 	services := factory.Core().V1().Services()
+	serviceAccounts := factory.Core().V1().ServiceAccounts()
+	nodes := factory.Core().V1().Nodes()
+	pvs := factory.Core().V1().PersistentVolumes()
+	ingresses := factory.Networking().V1().Ingresses()
 	endpointSlices := factory.Discovery().V1().EndpointSlices()
 	return &MonitorInformerResolver{
-		factory:        factory,
-		deployments:    deployments,
-		pods:           pods,
-		configMaps:     configMaps,
-		secrets:        secrets,
-		pvcs:           pvcs,
-		services:       services,
-		endpointSlices: endpointSlices,
-		query:          NewListerResolver(deployments.Lister(), pods.Lister(), configMaps.Lister(), secrets.Lister(), pvcs.Lister(), services.Lister()),
+		factory:         factory,
+		deployments:     deployments,
+		pods:            pods,
+		configMaps:      configMaps,
+		secrets:         secrets,
+		pvcs:            pvcs,
+		services:        services,
+		serviceAccounts: serviceAccounts,
+		nodes:           nodes,
+		pvs:             pvs,
+		ingresses:       ingresses,
+		endpointSlices:  endpointSlices,
+		query:           NewListerResolver(deployments.Lister(), pods.Lister(), configMaps.Lister(), secrets.Lister(), pvcs.Lister(), services.Lister(), serviceAccounts.Lister(), nodes.Lister(), pvs.Lister(), ingresses.Lister()),
 		syncers: []cache.InformerSynced{
 			deployments.Informer().HasSynced,
 			pods.Informer().HasSynced,
@@ -55,6 +68,10 @@ func NewMonitorInformerResolver(client kubernetes.Interface) *MonitorInformerRes
 			secrets.Informer().HasSynced,
 			pvcs.Informer().HasSynced,
 			services.Informer().HasSynced,
+			serviceAccounts.Informer().HasSynced,
+			nodes.Informer().HasSynced,
+			pvs.Informer().HasSynced,
+			ingresses.Informer().HasSynced,
 			endpointSlices.Informer().HasSynced,
 		},
 	}
@@ -75,6 +92,18 @@ func (r *MonitorInformerResolver) PersistentVolumeClaims() coreinformers.Persist
 }
 
 func (r *MonitorInformerResolver) Services() coreinformers.ServiceInformer { return r.services }
+
+func (r *MonitorInformerResolver) ServiceAccounts() coreinformers.ServiceAccountInformer {
+	return r.serviceAccounts
+}
+
+func (r *MonitorInformerResolver) Nodes() coreinformers.NodeInformer { return r.nodes }
+
+func (r *MonitorInformerResolver) PersistentVolumes() coreinformers.PersistentVolumeInformer {
+	return r.pvs
+}
+
+func (r *MonitorInformerResolver) Ingresses() networkinginformers.IngressInformer { return r.ingresses }
 
 func (r *MonitorInformerResolver) EndpointSlices() discoveryinformers.EndpointSliceInformer {
 	return r.endpointSlices
