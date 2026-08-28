@@ -3,11 +3,15 @@ package catalog
 
 import (
 	ref "github.com/vincent/KubeDepGuard/internal/dependency/reference"
-	"github.com/vincent/KubeDepGuard/internal/dependency/reference/pod"
+	"github.com/vincent/KubeDepGuard/internal/dependency/reference/workload"
 )
 
 // DefaultDirectRegistry contains every direct-reference field extractor.
 var DefaultDirectRegistry = ref.NewRegistry(
-	pod.NewConfigMapExtractor,
-	pod.NewSecretExtractor,
+	workload.NewPodConfigMapExtractor,
+	workload.NewPodSecretExtractor,
+	workload.NewPodPersistentVolumeClaimExtractor,
+	workload.NewDeploymentConfigMapExtractor,
+	workload.NewDeploymentSecretExtractor,
+	workload.NewDeploymentPersistentVolumeClaimExtractor,
 )
