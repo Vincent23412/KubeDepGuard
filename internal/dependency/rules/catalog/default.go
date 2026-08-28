@@ -8,7 +8,8 @@ import (
 )
 
 var DefaultRegistry = rules.NewRegistry(
-	direct.NewPodConfigMapRule(),
-	direct.NewPodSecretRule(),
+	direct.NewWorkloadConfigMapRule(),
+	direct.NewWorkloadSecretRule(),
+	direct.NewWorkloadPersistentVolumeClaimRule(),
 	conditional.NewServicePodRule(),
 )
