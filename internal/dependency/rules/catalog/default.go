@@ -11,5 +11,6 @@ var DefaultRegistry = rules.NewRegistry(
 	direct.NewWorkloadConfigMapRule(),
 	direct.NewWorkloadSecretRule(),
 	direct.NewWorkloadPersistentVolumeClaimRule(),
+	direct.NewPodNodeRule(),
 	conditional.NewServicePodRule(),
 )
