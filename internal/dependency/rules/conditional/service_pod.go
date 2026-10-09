@@ -36,7 +36,7 @@ func (r ServicePodRule) Validate(svc *corev1.Service, selectorRef serviceRef.Sel
 
 func (r ServicePodRule) Applies(request rules.Request) bool {
 	return (request.Resource == "services" && (request.Operation == rules.Create || request.Operation == rules.Update)) ||
-		(request.Resource == "pods" && request.Operation == rules.Delete)
+		(request.Resource == "pods" && (request.Operation == rules.Update || request.Operation == rules.Delete))
 }
 
 func (r ServicePodRule) Evaluate(request rules.Request, query resolver.Query) (rules.Result, error) {
@@ -64,17 +64,36 @@ func (r ServicePodRule) Evaluate(request rules.Request, query resolver.Query) (r
 		if err != nil {
 			return rules.Result{}, err
 		}
-		foundPod := false
-		remaining := make([]resolver.Resource, 0, len(pods))
-		for _, candidate := range pods {
-			if candidate.GetName() == request.Name {
-				foundPod = true
-				continue
+		candidates := make([]resolver.Resource, 0, len(pods))
+		if request.Operation == rules.Update {
+			updated, ok := request.Object.(*corev1.Pod)
+			if !ok {
+				return rules.Result{}, fmt.Errorf("expected Pod object")
 			}
-			remaining = append(remaining, candidate)
-		}
-		if !foundPod {
-			return rules.Result{}, nil
+			found := false
+			for _, candidate := range pods {
+				if candidate.GetName() == request.Name {
+					candidates = append(candidates, updated)
+					found = true
+					continue
+				}
+				candidates = append(candidates, candidate)
+			}
+			if !found {
+				candidates = append(candidates, updated)
+			}
+		} else {
+			foundPod := false
+			for _, candidate := range pods {
+				if candidate.GetName() == request.Name {
+					foundPod = true
+					continue
+				}
+				candidates = append(candidates, candidate)
+			}
+			if !foundPod {
+				return rules.Result{}, nil
+			}
 		}
 		services, err := query.List(resolver.ResourceScope{Kind: "Service", Namespace: request.Namespace})
 		if err != nil {
@@ -93,7 +112,7 @@ func (r ServicePodRule) Evaluate(request rules.Request, query resolver.Query) (r
 			if err != nil {
 				return rules.Result{}, err
 			}
-			found := r.Validate(svc, selector, remaining)
+			found := r.Validate(svc, selector, candidates)
 			violations = append(violations, found...)
 		}
 		return rules.Result{Violations: violations, Reject: len(violations) > 0}, nil

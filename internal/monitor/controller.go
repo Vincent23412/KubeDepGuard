@@ -60,10 +60,10 @@ func New(informers *resolver.MonitorInformerResolver, recorder record.EventRecor
 		UpdateFunc: func(_, obj any) { c.enqueue("pod", obj); c.enqueueAllServices() },
 		DeleteFunc: func(any) { c.enqueueAllServices() },
 	})
-	services.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueue("service", obj) }, UpdateFunc: func(_, obj any) { c.enqueue("service", obj) }, DeleteFunc: func(obj any) { c.enqueue("service", obj) }})
-	configMaps.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }})
-	secrets.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }})
-	pvcs.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }})
+	services.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueue("service", obj); c.enqueueAllIngresses() }, UpdateFunc: func(_, obj any) { c.enqueue("service", obj); c.enqueueAllIngresses() }, DeleteFunc: func(obj any) { c.enqueue("service", obj); c.enqueueAllIngresses() }})
+	configMaps.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllDeployments() }})
+	secrets.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods() }, DeleteFunc: func(any) { c.enqueueAllPods() }})
+	pvcs.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllDeployments() }})
 	serviceAccounts.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }})
 	nodes.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods() }, DeleteFunc: func(any) { c.enqueueAllPods() }})
 	pvs.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }})
@@ -210,6 +210,13 @@ func (c *Controller) enqueueAllDeployments() {
 	deployments, _ := c.deployments.Lister().List(labels.Everything())
 	for _, deployment := range deployments {
 		c.enqueue("deployment", deployment)
+	}
+}
+
+func (c *Controller) enqueueAllIngresses() {
+	ingresses, _ := c.ingresses.Lister().List(labels.Everything())
+	for _, ingress := range ingresses {
+		c.enqueue("ingress", ingress)
 	}
 }
 
