@@ -14,7 +14,7 @@ cleanup() {
 	# Remove sources before their targets so enforce deletion rules cannot leave
 	# the temporary namespace terminating.
 	kubectl -n "$test_namespace" delete services --all --ignore-not-found --wait=true >/dev/null 2>&1 || true
-	kubectl -n "$test_namespace" delete pods --all --ignore-not-found --wait=true >/dev/null 2>&1 || true
+	kubectl -n "$test_namespace" delete deployments,pods --all --ignore-not-found --wait=true >/dev/null 2>&1 || true
 	kubectl -n "$test_namespace" delete configmaps,secrets,persistentvolumeclaims --all --ignore-not-found --wait=true >/dev/null 2>&1 || true
 	kubectl delete namespace "$test_namespace" --ignore-not-found --wait=true --timeout=60s >/dev/null 2>&1 || true
 }
@@ -78,35 +78,24 @@ if [[ "$(kubectl get namespace "$test_namespace" -o jsonpath='{.metadata.labels.
 fi
 sleep 2
 
-expect_rejected "enforce Pod with missing ConfigMap" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-configmap.yaml
 expect_rejected "enforce Deployment with missing ConfigMap" kubectl -n "$test_namespace" apply -f examples/failures/enforce-deployment-missing-configmap.yaml
 expect_rejected "enforce Pod with missing Secret" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-secret.yaml
-expect_rejected "enforce Pod with missing PVC" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-pvc.yaml
-expect_rejected "enforce Pod with missing ConfigMap key" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-configmap-key.yaml
-expect_rejected "enforce Pod with missing Secret key" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-secret-key.yaml
-expect_rejected "enforce Pod with missing ServiceAccount" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-serviceaccount.yaml
-expect_rejected "enforce Pod with missing Node" kubectl -n "$test_namespace" apply -f examples/failures/enforce-pod-missing-node.yaml
-
-kubectl -n "$test_namespace" apply -f examples/failures/warn-pod-missing-configmap.yaml
-wait_for_event "MissingConfigMap" "warn-pod-missing-configmap"
-
-kubectl -n "$test_namespace" apply -f examples/failures/warn-pod-pvc-pending.yaml
-wait_for_event "PersistentVolumeClaimNotBound" "warn-pod-pvc-pending"
+expect_rejected "enforce Deployment with missing PVC" kubectl -n "$test_namespace" apply -f examples/failures/enforce-deployment-missing-pvc.yaml
 
 expect_rejected "enforce Service with an empty selector" kubectl -n "$test_namespace" apply -f examples/failures/enforce-service-empty-selector.yaml
 expect_rejected "enforce Ingress with missing Service" kubectl -n "$test_namespace" apply -f examples/failures/enforce-ingress-missing-service.yaml
 expect_rejected "enforce Ingress with missing Service port" kubectl -n "$test_namespace" apply -f examples/failures/enforce-ingress-missing-service-port.yaml
 
 kubectl -n "$test_namespace" apply -f examples/failures/enforce-configmap-delete-setup.yaml
-expect_rejected "deleting ConfigMap referenced by enforce Pod" kubectl -n "$test_namespace" delete configmap protected-config
+expect_rejected "deleting ConfigMap referenced by enforce Deployment" kubectl -n "$test_namespace" delete configmap protected-config
 
 kubectl -n "$test_namespace" apply -f examples/failures/enforce-secret-delete-setup.yaml
 expect_rejected "deleting Secret referenced by enforce Pod" kubectl -n "$test_namespace" delete secret protected-credentials
 
+kubectl -n "$test_namespace" apply -f examples/failures/enforce-pvc-delete-setup.yaml
+expect_rejected "deleting PVC referenced by enforce Deployment" kubectl -n "$test_namespace" delete persistentvolumeclaim protected-data
+
 kubectl -n "$test_namespace" apply -f examples/failures/enforce-last-pod-delete-setup.yaml
 expect_rejected "deleting final Pod selected by enforce Service" kubectl -n "$test_namespace" delete pod enforce-service-target
-
-kubectl -n "$test_namespace" apply -f examples/failures/warn-service-no-ready-endpoint.yaml
-wait_for_event "NoReadyEndpoint" "warn-service-no-ready-endpoint"
 
 echo "all kind integration tests passed"

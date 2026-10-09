@@ -1,0 +1,35 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: protected-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enforce-pvc-consumer
+  annotations:
+    dependency.kubedepguard.io/mode: enforce
+spec:
+  selector:
+    matchLabels:
+      app: enforce-pvc-consumer
+  template:
+    metadata:
+      labels:
+        app: enforce-pvc-consumer
+    spec:
+      containers:
+        - name: app
+          image: nginx:stable
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/app
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: protected-data

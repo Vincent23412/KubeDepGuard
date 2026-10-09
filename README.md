@@ -1,9 +1,12 @@
 # KubeDepGuard
 
-KubeDepGuard is a Kubernetes MVP for validating and observing two dependency types:
+KubeDepGuard validates and observes the following dependency types:
 
-- Pod → ConfigMap direct references (`volumes`, `envFrom`, and `env.valueFrom`)
-- Service → Pod selector dependencies, including Ready EndpointSlice availability
+- Deployment → ConfigMap direct references
+- Pod → Secret direct references
+- Deployment → PersistentVolumeClaim direct references
+- Ingress → Service direct references
+- Service → Pod selector dependencies
 
 It runs two independently deployable components:
 
@@ -59,7 +62,7 @@ Set `dependency.kubedepguard.io/mode` on a Pod or Service:
 | `warn` (default) | allow and log | emit Warning Event |
 | `disabled` | skip | skip |
 
-For a ConfigMap deletion, an enforce Pod that references it blocks deletion. Deleting the final Pod selected by an enforce Service is also blocked.
+For a ConfigMap deletion, an enforce Deployment that references it blocks deletion. Deleting the final Pod selected by an enforce Service is also blocked.
 
 ## Local deployment with kind
 

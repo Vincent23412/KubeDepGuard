@@ -5,21 +5,29 @@ metadata:
 data:
   message: keep-me
 ---
-apiVersion: v1
-kind: Pod
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: enforce-configmap-consumer
   annotations:
     dependency.kubedepguard.io/mode: enforce
 spec:
-  containers:
-    - name: app
-      image: nginx:stable
-      env:
-        - name: MESSAGE
-          valueFrom:
-            configMapKeyRef:
-              # 刪除 protected-config 時會出錯：這個 enforce Pod 仍引用它。
-              # Webhook 會拒絕 `kubectl delete configmap protected-config`。
-              name: protected-config
-              key: message
+  selector:
+    matchLabels:
+      app: enforce-configmap-consumer
+  template:
+    metadata:
+      labels:
+        app: enforce-configmap-consumer
+    spec:
+      containers:
+        - name: app
+          image: nginx:stable
+          env:
+            - name: MESSAGE
+              valueFrom:
+                configMapKeyRef:
+                  # 刪除 protected-config 時會出錯：這個 enforce Deployment 仍引用它。
+                  # Webhook 會拒絕 `kubectl delete configmap protected-config`。
+                  name: protected-config
+                  key: message

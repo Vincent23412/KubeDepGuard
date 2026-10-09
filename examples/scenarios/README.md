@@ -11,31 +11,17 @@ kubectl get pods -n kube-dep-guard-system
 
 | 情境 | 預期結果 | 驗證面向 |
 | --- | --- | --- |
-| Enforce Pod 引用不存在 ConfigMap | `kubectl apply` 被拒絕 | Direct reference admission |
 | Enforce Deployment template 引用不存在 ConfigMap | `kubectl apply` 被拒絕 | PodSpec-based direct admission |
-| Enforce Pod 引用不存在 PVC | `kubectl apply` 被拒絕 | Direct reference admission |
-| Enforce Pod 引用不存在的 ConfigMap key | `kubectl apply` 被拒絕 | Direct reference key validation |
 | Enforce Pod 引用不存在的 Secret key | `kubectl apply` 被拒絕 | Direct reference key validation |
-| Enforce Pod 使用不存在的 ServiceAccount | `kubectl apply` 被拒絕 | Direct reference admission |
-| Enforce Pod 指定不存在的 Node | `kubectl apply` 被拒絕 | Conditional/state admission |
-| Warn Pod 使用尚未 Bound 的 PVC | 建立成功，Monitor 發 Warning | Direct reference + state |
-| Warn Pod 引用不存在 ConfigMap | 建立成功，Monitor 發 Warning | Runtime direct reference |
+| Enforce Deployment 引用不存在 PVC | `kubectl apply` 被拒絕 | Direct reference admission |
 | Enforce Service selector 為空 | `kubectl apply` 被拒絕 | Conditional admission |
 | Enforce Ingress 引用不存在的 Service | `kubectl apply` 被拒絕 | Direct reference admission |
 | Enforce Ingress 引用不存在的 Service port | `kubectl apply` 被拒絕 | Direct reference validation |
 | Enforce ConfigMap deletion | `kubectl delete configmap` 被拒絕 | Direct dependency delete protection |
 | Enforce final Pod deletion | `kubectl delete pod` 被拒絕 | Conditional dependency delete protection |
-| Service 無 Ready endpoint | 建立成功，Monitor 發 Warning | Runtime availability |
+| Enforce PVC deletion | `kubectl delete pvc` 被拒絕 | Direct dependency delete protection |
 
-## 1. Enforce Pod 引用不存在的 ConfigMap
-
-```sh
-kubectl apply -f examples/failures/enforce-pod-missing-configmap.yaml
-```
-
-預期：Admission Webhook 拒絕請求，訊息包含 `references ConfigMap`。
-
-## 2. Enforce Deployment template 引用不存在的 ConfigMap
+## 1. Enforce Deployment template 引用不存在的 ConfigMap
 
 ```sh
 kubectl apply -f examples/failures/enforce-deployment-missing-configmap.yaml
@@ -43,51 +29,23 @@ kubectl apply -f examples/failures/enforce-deployment-missing-configmap.yaml
 
 預期：Deployment 建立前就被 Admission Webhook 拒絕；不必等 ReplicaSet 或 Pod 建立。
 
-## 3. Warn Pod 引用不存在的 ConfigMap
+## 2. Enforce Deployment template 引用不存在的 PVC
 
 ```sh
-kubectl apply -f examples/failures/warn-pod-missing-configmap.yaml
-kubectl get events --field-selector reason=MissingConfigMap --sort-by=.lastTimestamp
-```
-
-預期：Pod 建立成功；Monitor 建立 `MissingConfigMap` Warning Event。
-
-## 4. Enforce Pod 引用不存在的 PVC
-
-```sh
-kubectl apply -f examples/failures/enforce-pod-missing-pvc.yaml
+kubectl apply -f examples/failures/enforce-deployment-missing-pvc.yaml
 ```
 
 預期：Admission Webhook 拒絕請求，訊息包含 `PersistentVolumeClaim`。
 
-## 5. Warn Pod 使用尚未 Bound 的 PVC
+## 3. Enforce Pod 引用不存在的 Secret key
 
 ```sh
-kubectl apply -f examples/failures/warn-pod-pvc-pending.yaml
-kubectl get events --field-selector reason=PersistentVolumeClaimNotBound --sort-by=.lastTimestamp
-```
-
-預期：Pod 建立成功；PVC 維持 Pending，Monitor 建立 `PersistentVolumeClaimNotBound` Warning Event。
-
-## 6. Enforce Pod 引用不存在的 ConfigMap / Secret key
-
-```sh
-kubectl apply -f examples/failures/enforce-pod-missing-configmap-key.yaml
 kubectl apply -f examples/failures/enforce-pod-missing-secret-key.yaml
 ```
 
-預期：ConfigMap 或 Secret 本身存在，但被引用的 key 不存在，因此 Admission Webhook 拒絕 Pod。
+預期：Secret 本身存在，但被引用的 key 不存在，因此 Admission Webhook 拒絕 Pod。
 
-## 7. Enforce Pod 使用不存在的 ServiceAccount 或 Node
-
-```sh
-kubectl apply -f examples/failures/enforce-pod-missing-serviceaccount.yaml
-kubectl apply -f examples/failures/enforce-pod-missing-node.yaml
-```
-
-預期：Admission Webhook 分別拒絕不存在的 ServiceAccount，以及不存在的 `nodeName`。
-
-## 8. Enforce Service selector 沒有匹配 Pod
+## 4. Enforce Service selector 沒有匹配 Pod
 
 ```sh
 kubectl apply -f examples/failures/enforce-service-empty-selector.yaml
@@ -95,7 +53,7 @@ kubectl apply -f examples/failures/enforce-service-empty-selector.yaml
 
 預期：Admission Webhook 拒絕請求，訊息包含 `selector matches no Pods`。
 
-## 9. Enforce Ingress 引用不存在的 Service 或 port
+## 5. Enforce Ingress 引用不存在的 Service 或 port
 
 ```sh
 kubectl apply -f examples/failures/enforce-ingress-missing-service.yaml
@@ -104,7 +62,7 @@ kubectl apply -f examples/failures/enforce-ingress-missing-service-port.yaml
 
 預期：Admission Webhook 分別拒絕不存在的 backend Service，以及 Service 中不存在的 backend port。
 
-## 10. 阻擋刪除仍被 enforce Pod 使用的 ConfigMap
+## 6. 阻擋刪除仍被 enforce Deployment 使用的 ConfigMap
 
 ```sh
 kubectl apply -f examples/failures/enforce-configmap-delete-setup.yaml
@@ -113,14 +71,14 @@ kubectl delete configmap protected-config
 
 預期：第二個命令被拒絕，因為 `enforce-configmap-consumer` 仍引用 `protected-config`。
 
-清理時，先刪除 Pod，再刪除 ConfigMap：
+清理時，先刪除 Deployment，再刪除 ConfigMap：
 
 ```sh
-kubectl delete pod enforce-configmap-consumer
+kubectl delete deployment enforce-configmap-consumer
 kubectl delete configmap protected-config
 ```
 
-## 11. 阻擋刪除 enforce Service 的最後一個 Pod
+## 7. 阻擋刪除 enforce Service 的最後一個 Pod
 
 ```sh
 kubectl apply -f examples/failures/enforce-last-pod-delete-setup.yaml
@@ -136,17 +94,11 @@ kubectl delete service enforce-service-target
 kubectl delete pod enforce-service-target
 ```
 
-## 12. Service 沒有 Ready endpoint
+## 8. 阻擋刪除仍被 enforce Deployment 使用的 PVC
 
 ```sh
-kubectl apply -f examples/failures/warn-service-no-ready-endpoint.yaml
-kubectl get events --field-selector reason=NoReadyEndpoint --sort-by=.lastTimestamp
+kubectl apply -f examples/failures/enforce-pvc-delete-setup.yaml
+kubectl delete persistentvolumeclaim protected-data
 ```
 
-預期：Pod 因固定失敗的 readiness probe 維持 NotReady；Service 仍會建立，但 Monitor 發出 `NoReadyEndpoint` Warning Event。
-
-清理：
-
-```sh
-kubectl delete -f examples/failures/warn-service-no-ready-endpoint.yaml
-```
+預期：第二個命令被拒絕，因為 `enforce-pvc-consumer` 仍引用 `protected-data`。

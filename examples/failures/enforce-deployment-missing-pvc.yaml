@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: enforce-deployment-missing-pvc
+  annotations:
+    dependency.kubedepguard.io/mode: enforce
+spec:
+  selector:
+    matchLabels:
+      app: missing-pvc
+  template:
+    metadata:
+      labels:
+        app: missing-pvc
+    spec:
+      containers:
+        - name: app
+          image: nginx:stable
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/app
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: does-not-exist
