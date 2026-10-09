@@ -8,7 +8,6 @@ import (
 	referencecatalog "github.com/vincent/KubeDepGuard/internal/dependency/reference/catalog"
 	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
 	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
-	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -20,16 +19,16 @@ func NewWorkloadPersistentVolumeClaimRule() WorkloadPersistentVolumeClaimRule {
 }
 
 func (r WorkloadPersistentVolumeClaimRule) ValidateTargetDeletion(source metav1.Object, refs []ref.Reference, scope resolver.ResourceScope, name string) []dependency.Violation {
-	return r.referencedBy(source, refs, scope, name, "Pod")
+	return r.referencedBy(source, refs, scope, name, "Deployment")
 }
 
 func (r WorkloadPersistentVolumeClaimRule) Applies(request rules.Request) bool {
-	return ((request.Resource == "pods" || request.Resource == "deployments") && (request.Operation == rules.Create || request.Operation == rules.Update)) ||
+	return (request.Resource == "deployments" && (request.Operation == rules.Create || request.Operation == rules.Update)) ||
 		(request.Resource == "persistentvolumeclaims" && request.Operation == rules.Delete)
 }
 
 func (r WorkloadPersistentVolumeClaimRule) Evaluate(request rules.Request, query resolver.Query) (rules.Result, error) {
-	if request.Resource == "pods" || request.Resource == "deployments" {
+	if request.Resource == "deployments" {
 		source, ok := request.Object.(metav1.Object)
 		if !ok {
 			return rules.Result{}, fmt.Errorf("expected %s object", request.Resource)
@@ -45,50 +44,20 @@ func (r WorkloadPersistentVolumeClaimRule) Evaluate(request rules.Request, query
 		if err != nil {
 			return rules.Result{}, err
 		}
-		byName := make(map[string]*corev1.PersistentVolumeClaim, len(resources))
+		available := map[resolver.ResourceScope]map[string]struct{}{
+			{Kind: r.TargetKind(), Namespace: source.GetNamespace()}: {},
+		}
 		for _, resource := range resources {
-			pvc, ok := resource.(*corev1.PersistentVolumeClaim)
-			if ok {
-				byName[pvc.Name] = pvc
-			}
+			available[resolver.ResourceScope{Kind: r.TargetKind(), Namespace: source.GetNamespace()}][resource.GetName()] = struct{}{}
 		}
-		pvs, err := query.List(resolver.ResourceScope{Kind: "PersistentVolume"})
-		if err != nil {
-			return rules.Result{}, err
-		}
-		byPVName := make(map[string]*corev1.PersistentVolume, len(pvs))
-		for _, resource := range pvs {
-			if pv, ok := resource.(*corev1.PersistentVolume); ok {
-				byPVName[pv.Name] = pv
-			}
-		}
-		violations := make([]dependency.Violation, 0)
-		for _, reference := range references {
-			if reference.TargetKind != r.TargetKind() {
-				continue
-			}
-			pvc, exists := byName[reference.Name]
-			if !exists {
-				violations = append(violations, dependency.Violation{Rule: r.Name(), Resource: source.GetNamespace() + "/" + source.GetName(), Message: fmt.Sprintf("references PersistentVolumeClaim %q at %s which does not exist", reference.Name, reference.FieldPath)})
-				continue
-			}
-			if pvc.DeletionTimestamp != nil {
-				violations = append(violations, dependency.Violation{Rule: "UnavailablePersistentVolumeClaim", Resource: source.GetNamespace() + "/" + source.GetName(), Message: fmt.Sprintf("references PersistentVolumeClaim %q at %s which is being deleted", reference.Name, reference.FieldPath)})
-			} else if pvc.Status.Phase != corev1.ClaimBound {
-				violations = append(violations, dependency.Violation{Rule: "PersistentVolumeClaimNotBound", Resource: source.GetNamespace() + "/" + source.GetName(), Message: fmt.Sprintf("references PersistentVolumeClaim %q at %s which is not Bound (phase %s)", reference.Name, reference.FieldPath, pvc.Status.Phase)})
-			} else if pvc.Spec.VolumeName == "" {
-				violations = append(violations, dependency.Violation{Rule: "PersistentVolumeUnavailable", Resource: source.GetNamespace() + "/" + source.GetName(), Message: fmt.Sprintf("references PersistentVolumeClaim %q which is Bound without a PersistentVolume", reference.Name)})
-			} else if pv := byPVName[pvc.Spec.VolumeName]; pv == nil || pv.Status.Phase != corev1.VolumeBound || pv.DeletionTimestamp != nil {
-				violations = append(violations, dependency.Violation{Rule: "PersistentVolumeUnavailable", Resource: source.GetNamespace() + "/" + source.GetName(), Message: fmt.Sprintf("references PersistentVolumeClaim %q whose PersistentVolume %q is unavailable", reference.Name, pvc.Spec.VolumeName)})
-			}
-		}
+		violations := r.missing(source, references, available)
 		return rules.Result{Violations: violations, Reject: len(violations) > 0 && dependency.ModeFor(source) == dependency.ModeEnforce}, nil
 	}
 	if request.Resource != "persistentvolumeclaims" {
 		return rules.Result{}, nil
 	}
 	var violations []dependency.Violation
-	for _, kind := range []string{"Pod", "Deployment"} {
+	for _, kind := range []string{"Deployment"} {
 		resources, err := query.List(resolver.ResourceScope{Kind: kind, Namespace: request.Namespace})
 		if err != nil {
 			return rules.Result{}, err

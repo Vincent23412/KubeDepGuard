@@ -174,17 +174,17 @@ func (q pvcQuery) List(scope resolver.ResourceScope) ([]resolver.Resource, error
 	return nil, nil
 }
 
-func TestEvaluatorRejectsEnforcePodWithUnboundPVC(t *testing.T) {
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test", Annotations: map[string]string{dependency.PolicyAnnotation: string(dependency.ModeEnforce)}}, Spec: corev1.PodSpec{Volumes: []corev1.Volume{{
+func TestEvaluatorAllowsEnforceDeploymentWithPendingPVC(t *testing.T) {
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test", Annotations: map[string]string{dependency.PolicyAnnotation: string(dependency.ModeEnforce)}}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{
 		Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data-pvc"}},
-	}}, Containers: []corev1.Container{{Name: "app"}}}}
+	}}, Containers: []corev1.Container{{Name: "app"}}}}}}
 	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data-pvc", Namespace: "test"}, Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimPending}}
-	result, err := rules.NewEvaluator(pvcQuery{pvc: pvc}, rulecatalog.DefaultRegistry.AdmissionRules()).Evaluate(rules.Request{Resource: "pods", Operation: rules.Create, Namespace: "test", Name: "api", Object: pod})
+	result, err := rules.NewEvaluator(pvcQuery{pvc: pvc}, rulecatalog.DefaultRegistry.AdmissionRules()).Evaluate(rules.Request{Resource: "deployments", Operation: rules.Create, Namespace: "test", Name: "api", Object: deployment})
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
-	if !result.Reject || len(result.Violations) != 1 || result.Violations[0].Rule != "PersistentVolumeClaimNotBound" {
-		t.Fatalf("result = %#v, want one PVC state rejection", result)
+	if result.Reject || len(result.Violations) != 0 {
+		t.Fatalf("result = %#v, want pending PVC to remain a valid reference", result)
 	}
 }
 
@@ -202,7 +202,7 @@ func TestEvaluatorAllowsEnforcePodWithBoundPVC(t *testing.T) {
 	}
 }
 
-func TestEvaluatorRejectsEnforcePodWithMissingConfigMap(t *testing.T) {
+func TestEvaluatorDoesNotApplyConfigMapRuleToPod(t *testing.T) {
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:        "api",
@@ -221,8 +221,8 @@ func TestEvaluatorRejectsEnforcePodWithMissingConfigMap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
-	if !result.Reject || len(result.Violations) != 1 {
-		t.Fatalf("result = %#v, want one rejected violation", result)
+	if result.Reject || len(result.Violations) != 0 {
+		t.Fatalf("result = %#v, want ConfigMap rule to be scoped to Deployments", result)
 	}
 }
 
@@ -243,9 +243,9 @@ func TestEvaluatorRejectsEnforceDeploymentWithMissingConfigMap(t *testing.T) {
 }
 
 func TestWorkloadConfigMapRuleRejectsReferencedTargetDeletion(t *testing.T) {
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test"}}
-	refs := []ref.Reference{{SourceKind: "Pod", TargetKind: "ConfigMap", Namespace: "test", Name: "settings"}}
-	violations := direct.NewWorkloadConfigMapRule().ValidateTargetDeletion(pod, refs, resolver.ResourceScope{Kind: "ConfigMap", Namespace: "test"}, "settings")
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test"}}
+	refs := []ref.Reference{{SourceKind: "Deployment", TargetKind: "ConfigMap", Namespace: "test", Name: "settings"}}
+	violations := direct.NewWorkloadConfigMapRule().ValidateTargetDeletion(deployment, refs, resolver.ResourceScope{Kind: "ConfigMap", Namespace: "test"}, "settings")
 	if got := len(violations); got != 1 {
 		t.Fatalf("violations = %d, want 1", got)
 	}

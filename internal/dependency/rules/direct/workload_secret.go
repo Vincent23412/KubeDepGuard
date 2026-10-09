@@ -23,13 +23,13 @@ func (r WorkloadSecretRule) ValidateTargetDeletion(source metav1.Object, refs []
 }
 
 func (r WorkloadSecretRule) Applies(request rules.Request) bool {
-	return ((request.Resource == "pods" || request.Resource == "deployments") && (request.Operation == rules.Create || request.Operation == rules.Update)) ||
+	return (request.Resource == "pods" && (request.Operation == rules.Create || request.Operation == rules.Update)) ||
 		(request.Resource == "secrets" && request.Operation == rules.Delete)
 }
 
 func (r WorkloadSecretRule) Evaluate(request rules.Request, query resolver.Query) (rules.Result, error) {
 	switch {
-	case request.Resource == "pods" || request.Resource == "deployments":
+	case request.Resource == "pods":
 		source, ok := request.Object.(metav1.Object)
 		if !ok {
 			return rules.Result{}, fmt.Errorf("expected %s object", request.Resource)
@@ -54,7 +54,7 @@ func (r WorkloadSecretRule) Evaluate(request rules.Request, query resolver.Query
 		return rules.Result{Violations: violations, Reject: len(violations) > 0 && dependency.ModeFor(source) == dependency.ModeEnforce}, nil
 	case request.Resource == "secrets":
 		var violations []dependency.Violation
-		for _, kind := range []string{"Pod", "Deployment"} {
+		for _, kind := range []string{"Pod"} {
 			resources, err := query.List(resolver.ResourceScope{Kind: kind, Namespace: request.Namespace})
 			if err != nil {
 				return rules.Result{}, err

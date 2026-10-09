@@ -19,17 +19,17 @@ func NewWorkloadConfigMapRule() WorkloadConfigMapRule {
 }
 
 func (r WorkloadConfigMapRule) ValidateTargetDeletion(source metav1.Object, refs []ref.Reference, scope resolver.ResourceScope, name string) []dependency.Violation {
-	return r.referencedBy(source, refs, scope, name, "Pod")
+	return r.referencedBy(source, refs, scope, name, "Deployment")
 }
 
 func (r WorkloadConfigMapRule) Applies(request rules.Request) bool {
-	return ((request.Resource == "pods" || request.Resource == "deployments") && (request.Operation == rules.Create || request.Operation == rules.Update)) ||
+	return (request.Resource == "deployments" && (request.Operation == rules.Create || request.Operation == rules.Update)) ||
 		(request.Resource == "configmaps" && request.Operation == rules.Delete)
 }
 
 func (r WorkloadConfigMapRule) Evaluate(request rules.Request, query resolver.Query) (rules.Result, error) {
 	switch {
-	case request.Resource == "pods" || request.Resource == "deployments":
+	case request.Resource == "deployments":
 		source, ok := request.Object.(metav1.Object)
 		if !ok {
 			return rules.Result{}, fmt.Errorf("expected %s object", request.Resource)
@@ -54,7 +54,7 @@ func (r WorkloadConfigMapRule) Evaluate(request rules.Request, query resolver.Qu
 		return rules.Result{Violations: violations, Reject: len(violations) > 0 && dependency.ModeFor(source) == dependency.ModeEnforce}, nil
 	case request.Resource == "configmaps":
 		var violations []dependency.Violation
-		for _, kind := range []string{"Pod", "Deployment"} {
+		for _, kind := range []string{"Deployment"} {
 			resources, err := query.List(resolver.ResourceScope{Kind: kind, Namespace: request.Namespace})
 			if err != nil {
 				return rules.Result{}, err
