@@ -9,14 +9,8 @@ import (
 
 // DefaultDirectRegistry contains every direct-reference field extractor.
 var DefaultDirectRegistry = ref.NewRegistry(
-	workload.NewPodConfigMapExtractor,
-	workload.NewPodSecretExtractor,
-	workload.NewPodPersistentVolumeClaimExtractor,
 	workload.NewDeploymentConfigMapExtractor,
 	workload.NewDeploymentSecretExtractor,
 	workload.NewDeploymentPersistentVolumeClaimExtractor,
-	workload.NewPodServiceAccountExtractor,
-	workload.NewDeploymentServiceAccountExtractor,
-	workload.NewPodNodeExtractor,
 	ingress.NewServiceExtractor,
 )

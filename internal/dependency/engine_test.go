@@ -17,8 +17,17 @@ import (
 )
 
 func TestConfigMapReferences(t *testing.T) {
-	pod := &corev1.Pod{Spec: corev1.PodSpec{Volumes: []corev1.Volume{{VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "volume"}}}}}, Containers: []corev1.Container{{EnvFrom: []corev1.EnvFromSource{{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "all-env"}}}}, Env: []corev1.EnvVar{{ValueFrom: &corev1.EnvVarSource{ConfigMapKeyRef: &corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "one-env"}}}}}}}}}
-	references, err := referencecatalog.DefaultDirectRegistry.Extract("Pod", pod)
+	configVolume := corev1.Volume{VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "volume"}}}}
+	configContainer := corev1.Container{
+		EnvFrom: []corev1.EnvFromSource{{ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "all-env"}}}},
+		Env:     []corev1.EnvVar{{ValueFrom: &corev1.EnvVarSource{ConfigMapKeyRef: &corev1.ConfigMapKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "one-env"}}}}},
+	}
+	podSpec := corev1.PodSpec{
+		Volumes:    []corev1.Volume{configVolume},
+		Containers: []corev1.Container{configContainer},
+	}
+	deployment := &appsv1.Deployment{Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: podSpec}}}
+	references, err := referencecatalog.DefaultDirectRegistry.Extract("Deployment", deployment)
 	if err != nil {
 		t.Fatalf("extract references: %v", err)
 	}
@@ -37,7 +46,7 @@ func TestConfigMapReferences(t *testing.T) {
 }
 
 func TestSecretReferences(t *testing.T) {
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "test"}, Spec: corev1.PodSpec{
+	podSpec := corev1.PodSpec{
 		ImagePullSecrets: []corev1.LocalObjectReference{{Name: "pull"}},
 		Volumes: []corev1.Volume{
 			{Name: "secret", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "volume"}}},
@@ -47,8 +56,9 @@ func TestSecretReferences(t *testing.T) {
 			EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "all-env"}}}},
 			Env:     []corev1.EnvVar{{ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "one-env"}, Key: "token"}}}},
 		}},
-	}}
-	references, err := referencecatalog.DefaultDirectRegistry.Extract("Pod", pod)
+	}
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "test"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: podSpec}}}
+	references, err := referencecatalog.DefaultDirectRegistry.Extract("Deployment", deployment)
 	if err != nil {
 		t.Fatalf("extract references: %v", err)
 	}
@@ -67,10 +77,13 @@ func TestSecretReferences(t *testing.T) {
 }
 
 func TestPersistentVolumeClaimReferences(t *testing.T) {
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Namespace: "test"}, Spec: corev1.PodSpec{Volumes: []corev1.Volume{{
-		Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data-pvc"}},
-	}}}}
-	references, err := referencecatalog.DefaultDirectRegistry.Extract("Pod", pod)
+	podSpec := corev1.PodSpec{
+		Volumes: []corev1.Volume{{
+			Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data-pvc"}},
+		}},
+	}
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Namespace: "test"}, Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: podSpec}}}
+	references, err := referencecatalog.DefaultDirectRegistry.Extract("Deployment", deployment)
 	if err != nil {
 		t.Fatalf("extract references: %v", err)
 	}
@@ -81,7 +94,7 @@ func TestPersistentVolumeClaimReferences(t *testing.T) {
 			break
 		}
 	}
-	if found == nil || found.Name != "data-pvc" || found.FieldPath != "spec.volumes[0].persistentVolumeClaim.claimName" {
+	if found == nil || found.Name != "data-pvc" || found.FieldPath != "spec.template.spec.volumes[0].persistentVolumeClaim.claimName" {
 		t.Fatalf("PVC reference = %#v", found)
 	}
 }
@@ -118,9 +131,6 @@ func TestServiceHasMatchingPod(t *testing.T) {
 type testQuery struct{}
 
 func (testQuery) List(scope resolver.ResourceScope) ([]resolver.Resource, error) {
-	if scope.Kind == "ServiceAccount" {
-		return []resolver.Resource{&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: scope.Namespace}}}, nil
-	}
 	return nil, nil
 }
 
@@ -133,43 +143,16 @@ func TestDefaultRegistryCategories(t *testing.T) {
 	if got := len(rulecatalog.DefaultRegistry.ServiceConditionalRules()); got != 1 {
 		t.Fatalf("conditional rule count = %d, want 1", got)
 	}
-}
-
-func TestEvaluatorRejectsEnforcePodWithMissingSecret(t *testing.T) {
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        "api",
-			Namespace:   "test",
-			Annotations: map[string]string{dependency.PolicyAnnotation: string(dependency.ModeEnforce)},
-		},
-		Spec: corev1.PodSpec{Containers: []corev1.Container{{
-			Name: "app",
-			EnvFrom: []corev1.EnvFromSource{{
-				SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "missing"}},
-			}},
-		}}},
-	}
-	evaluator := rules.NewEvaluator(testQuery{}, rulecatalog.DefaultRegistry.AdmissionRules())
-	result, err := evaluator.Evaluate(rules.Request{Resource: "pods", Operation: rules.Create, Namespace: pod.Namespace, Name: pod.Name, Object: pod})
-	if err != nil {
-		t.Fatalf("evaluate: %v", err)
-	}
-	if !result.Reject || len(result.Violations) != 1 || result.Violations[0].Rule != "MissingSecret" {
-		t.Fatalf("result = %#v, want one MissingSecret rejection", result)
+	if got := len(rulecatalog.DefaultRegistry.AdmissionRules()); got != 6 {
+		t.Fatalf("admission rule count = %d, want 6", got)
 	}
 }
 
 type pvcQuery struct{ pvc *corev1.PersistentVolumeClaim }
 
 func (q pvcQuery) List(scope resolver.ResourceScope) ([]resolver.Resource, error) {
-	if scope.Kind == "ServiceAccount" {
-		return []resolver.Resource{&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "default", Namespace: scope.Namespace}}}, nil
-	}
 	if scope.Kind == "PersistentVolumeClaim" && q.pvc != nil {
 		return []resolver.Resource{q.pvc}, nil
-	}
-	if scope.Kind == "PersistentVolume" && q.pvc != nil && q.pvc.Spec.VolumeName != "" {
-		return []resolver.Resource{&corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: q.pvc.Spec.VolumeName}, Status: corev1.PersistentVolumeStatus{Phase: corev1.VolumeBound}}}, nil
 	}
 	return nil, nil
 }
@@ -188,41 +171,19 @@ func TestEvaluatorAllowsEnforceDeploymentWithPendingPVC(t *testing.T) {
 	}
 }
 
-func TestEvaluatorAllowsEnforcePodWithBoundPVC(t *testing.T) {
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test", Annotations: map[string]string{dependency.PolicyAnnotation: string(dependency.ModeEnforce)}}, Spec: corev1.PodSpec{Volumes: []corev1.Volume{{
-		Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: "data-pvc"}},
-	}}, Containers: []corev1.Container{{Name: "app"}}}}
-	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "data-pvc", Namespace: "test"}, Spec: corev1.PersistentVolumeClaimSpec{VolumeName: "data-pv"}, Status: corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound}}
-	result, err := rules.NewEvaluator(pvcQuery{pvc: pvc}, rulecatalog.DefaultRegistry.AdmissionRules()).Evaluate(rules.Request{Resource: "pods", Operation: rules.Create, Namespace: "test", Name: "api", Object: pod})
+func TestEvaluatorRejectsEnforceDeploymentWithMissingSecret(t *testing.T) {
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test", Annotations: map[string]string{dependency.PolicyAnnotation: string(dependency.ModeEnforce)}},
+		Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{
+			Name: "app", EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "missing"}}}},
+		}}}}},
+	}
+	result, err := rules.NewEvaluator(testQuery{}, rulecatalog.DefaultRegistry.AdmissionRules()).Evaluate(rules.Request{Resource: "deployments", Operation: rules.Create, Namespace: deployment.Namespace, Name: deployment.Name, Object: deployment})
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
-	if len(result.Violations) != 0 || result.Reject {
-		t.Fatalf("result = %#v, want no PVC violation", result)
-	}
-}
-
-func TestEvaluatorDoesNotApplyConfigMapRuleToPod(t *testing.T) {
-	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:        "api",
-			Namespace:   "test",
-			Annotations: map[string]string{dependency.PolicyAnnotation: string(dependency.ModeEnforce)},
-		},
-		Spec: corev1.PodSpec{Containers: []corev1.Container{{
-			Name: "app",
-			EnvFrom: []corev1.EnvFromSource{{
-				ConfigMapRef: &corev1.ConfigMapEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "missing"}},
-			}},
-		}}},
-	}
-	evaluator := rules.NewEvaluator(testQuery{}, rulecatalog.DefaultRegistry.AdmissionRules())
-	result, err := evaluator.Evaluate(rules.Request{Resource: "pods", Operation: rules.Create, Namespace: pod.Namespace, Name: pod.Name, Object: pod})
-	if err != nil {
-		t.Fatalf("evaluate: %v", err)
-	}
-	if result.Reject || len(result.Violations) != 0 {
-		t.Fatalf("result = %#v, want ConfigMap rule to be scoped to Deployments", result)
+	if !result.Reject || len(result.Violations) != 1 || result.Violations[0].Rule != "MissingSecret" {
+		t.Fatalf("result = %#v, want one MissingSecret rejection", result)
 	}
 }
 
@@ -255,9 +216,9 @@ func TestWorkloadConfigMapRuleRejectsReferencedTargetDeletion(t *testing.T) {
 }
 
 func TestWorkloadSecretRuleRejectsReferencedTargetDeletion(t *testing.T) {
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test"}}
-	refs := []ref.Reference{{SourceKind: "Pod", TargetKind: "Secret", Namespace: "test", Name: "credentials"}}
-	violations := direct.NewWorkloadSecretRule().ValidateTargetDeletion(pod, refs, resolver.ResourceScope{Kind: "Secret", Namespace: "test"}, "credentials")
+	deployment := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: "api", Namespace: "test"}}
+	refs := []ref.Reference{{SourceKind: "Deployment", TargetKind: "Secret", Namespace: "test", Name: "credentials"}}
+	violations := direct.NewWorkloadSecretRule().ValidateTargetDeletion(deployment, refs, resolver.ResourceScope{Kind: "Secret", Namespace: "test"}, "credentials")
 	if got := len(violations); got != 1 {
 		t.Fatalf("violations = %d, want 1", got)
 	}

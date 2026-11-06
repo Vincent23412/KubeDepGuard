@@ -11,7 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// WorkloadPersistentVolumeClaimRule validates PodSpec-based workload -> PVC references and PVC state.
+// WorkloadPersistentVolumeClaimRule validates Deployment -> PVC references.
 type WorkloadPersistentVolumeClaimRule struct{ DirectReferenceRule }
 
 func NewWorkloadPersistentVolumeClaimRule() WorkloadPersistentVolumeClaimRule {
@@ -36,19 +36,13 @@ func (r WorkloadPersistentVolumeClaimRule) Evaluate(request rules.Request, query
 		if dependency.ModeFor(source) == dependency.ModeDisabled {
 			return rules.Result{}, nil
 		}
-		references, err := referencecatalog.DefaultDirectRegistry.Extract(sourceKind(request.Resource), request.Object)
+		references, err := referencecatalog.DefaultDirectRegistry.Extract("Deployment", request.Object)
 		if err != nil {
 			return rules.Result{}, err
 		}
-		resources, err := query.List(resolver.ResourceScope{Kind: r.TargetKind(), Namespace: source.GetNamespace()})
+		available, err := r.availableTargets(references, query)
 		if err != nil {
 			return rules.Result{}, err
-		}
-		available := map[resolver.ResourceScope]map[string]struct{}{
-			{Kind: r.TargetKind(), Namespace: source.GetNamespace()}: {},
-		}
-		for _, resource := range resources {
-			available[resolver.ResourceScope{Kind: r.TargetKind(), Namespace: source.GetNamespace()}][resource.GetName()] = struct{}{}
 		}
 		violations := r.missing(source, references, available)
 		return rules.Result{Violations: violations, Reject: len(violations) > 0 && dependency.ModeFor(source) == dependency.ModeEnforce}, nil
@@ -57,22 +51,43 @@ func (r WorkloadPersistentVolumeClaimRule) Evaluate(request rules.Request, query
 		return rules.Result{}, nil
 	}
 	var violations []dependency.Violation
-	for _, kind := range []string{"Deployment"} {
-		resources, err := query.List(resolver.ResourceScope{Kind: kind, Namespace: request.Namespace})
+	resources, err := query.List(resolver.ResourceScope{Kind: "Deployment", Namespace: request.Namespace})
+	if err != nil {
+		return rules.Result{}, err
+	}
+	for _, resource := range resources {
+		source, ok := resource.(metav1.Object)
+		if !ok || dependency.ModeFor(source) != dependency.ModeEnforce {
+			continue
+		}
+		references, err := referencecatalog.DefaultDirectRegistry.Extract("Deployment", resource)
 		if err != nil {
 			return rules.Result{}, err
 		}
-		for _, resource := range resources {
-			source, ok := resource.(metav1.Object)
-			if !ok || dependency.ModeFor(source) != dependency.ModeEnforce {
-				continue
-			}
-			references, err := referencecatalog.DefaultDirectRegistry.Extract(kind, resource)
-			if err != nil {
-				return rules.Result{}, err
-			}
-			violations = append(violations, r.referencedBy(source, references, resolver.ResourceScope{Kind: r.TargetKind(), Namespace: request.Namespace}, request.Name, kind)...)
-		}
+		violations = append(violations, r.referencedBy(source, references, resolver.ResourceScope{Kind: r.TargetKind(), Namespace: request.Namespace}, request.Name, "Deployment")...)
 	}
 	return rules.Result{Violations: violations, Reject: len(violations) > 0}, nil
+}
+
+func (r WorkloadPersistentVolumeClaimRule) availableTargets(references []ref.Reference, query resolver.Query) (map[resolver.ResourceScope]map[string]struct{}, error) {
+	available := make(map[resolver.ResourceScope]map[string]struct{})
+	for _, reference := range references {
+		if reference.TargetKind != r.TargetKind() || reference.Optional {
+			continue
+		}
+		scope := resolver.ResourceScope{Kind: reference.TargetKind, Namespace: reference.Namespace}
+		if _, listed := available[scope]; listed {
+			continue
+		}
+		resources, err := query.List(scope)
+		if err != nil {
+			return nil, err
+		}
+		names := make(map[string]struct{}, len(resources))
+		for _, resource := range resources {
+			names[resource.GetName()] = struct{}{}
+		}
+		available[scope] = names
+	}
+	return available, nil
 }

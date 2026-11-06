@@ -34,5 +34,5 @@ webhooks:
       - operations: ["CREATE", "UPDATE"]
         apiGroups: ["networking.k8s.io"]
         apiVersions: ["v1"]
-        resources: ["ingresses"]
+        resources: ["ingresses", "networkpolicies"]
         scope: "Namespaced"

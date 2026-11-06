@@ -19,13 +19,11 @@ type PersistentVolumeClaimResolver = lister.PersistentVolumeClaimResolver
 type DeploymentResolver = lister.DeploymentResolver
 type PodResolver = lister.PodResolver
 type ServiceResolver = lister.ServiceResolver
-type ServiceAccountResolver = lister.ServiceAccountResolver
-type NodeResolver = lister.NodeResolver
-type PersistentVolumeResolver = lister.PersistentVolumeResolver
 type IngressResolver = lister.IngressResolver
+type NetworkPolicyResolver = lister.NetworkPolicyResolver
 
-func NewListerResolver(deployments appslisters.DeploymentLister, pods corelisters.PodLister, configMaps corelisters.ConfigMapLister, secrets corelisters.SecretLister, pvcs corelisters.PersistentVolumeClaimLister, services corelisters.ServiceLister, serviceAccounts corelisters.ServiceAccountLister, nodes corelisters.NodeLister, pvs corelisters.PersistentVolumeLister, ingresses networkinglisters.IngressLister) *ListerResolver {
-	return lister.NewListerResolver(deployments, pods, configMaps, secrets, pvcs, services, serviceAccounts, nodes, pvs, ingresses)
+func NewListerResolver(deployments appslisters.DeploymentLister, pods corelisters.PodLister, configMaps corelisters.ConfigMapLister, secrets corelisters.SecretLister, pvcs corelisters.PersistentVolumeClaimLister, services corelisters.ServiceLister, ingresses networkinglisters.IngressLister, networkPolicies networkinglisters.NetworkPolicyLister) *ListerResolver {
+	return lister.NewListerResolver(deployments, pods, configMaps, secrets, pvcs, services, ingresses, networkPolicies)
 }
 
 func NewDeploymentResolver(deployments appslisters.DeploymentLister) *DeploymentResolver {

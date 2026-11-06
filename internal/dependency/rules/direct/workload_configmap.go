@@ -11,7 +11,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// WorkloadConfigMapRule validates direct PodSpec-based workload -> ConfigMap references.
+// WorkloadConfigMapRule validates Deployment -> ConfigMap references.
 type WorkloadConfigMapRule struct{ DirectReferenceRule }
 
 func NewWorkloadConfigMapRule() WorkloadConfigMapRule {
@@ -37,7 +37,7 @@ func (r WorkloadConfigMapRule) Evaluate(request rules.Request, query resolver.Qu
 		if dependency.ModeFor(source) == dependency.ModeDisabled {
 			return rules.Result{}, nil
 		}
-		references, err := referencecatalog.DefaultDirectRegistry.Extract(sourceKind(request.Resource), request.Object)
+		references, err := referencecatalog.DefaultDirectRegistry.Extract("Deployment", request.Object)
 		if err != nil {
 			return rules.Result{}, err
 		}
@@ -54,34 +54,25 @@ func (r WorkloadConfigMapRule) Evaluate(request rules.Request, query resolver.Qu
 		return rules.Result{Violations: violations, Reject: len(violations) > 0 && dependency.ModeFor(source) == dependency.ModeEnforce}, nil
 	case request.Resource == "configmaps":
 		var violations []dependency.Violation
-		for _, kind := range []string{"Deployment"} {
-			resources, err := query.List(resolver.ResourceScope{Kind: kind, Namespace: request.Namespace})
+		resources, err := query.List(resolver.ResourceScope{Kind: "Deployment", Namespace: request.Namespace})
+		if err != nil {
+			return rules.Result{}, err
+		}
+		for _, resource := range resources {
+			source, ok := resource.(metav1.Object)
+			if !ok || dependency.ModeFor(source) != dependency.ModeEnforce {
+				continue
+			}
+			references, err := referencecatalog.DefaultDirectRegistry.Extract("Deployment", resource)
 			if err != nil {
 				return rules.Result{}, err
 			}
-			for _, resource := range resources {
-				source, ok := resource.(metav1.Object)
-				if !ok || dependency.ModeFor(source) != dependency.ModeEnforce {
-					continue
-				}
-				references, err := referencecatalog.DefaultDirectRegistry.Extract(kind, resource)
-				if err != nil {
-					return rules.Result{}, err
-				}
-				violations = append(violations, r.referencedBy(source, references, resolver.ResourceScope{Kind: r.TargetKind(), Namespace: request.Namespace}, request.Name, kind)...)
-			}
+			violations = append(violations, r.referencedBy(source, references, resolver.ResourceScope{Kind: r.TargetKind(), Namespace: request.Namespace}, request.Name, "Deployment")...)
 		}
 		return rules.Result{Violations: violations, Reject: len(violations) > 0}, nil
 	default:
 		return rules.Result{}, nil
 	}
-}
-
-func sourceKind(resource string) string {
-	if resource == "deployments" {
-		return "Deployment"
-	}
-	return "Pod"
 }
 
 func (r WorkloadConfigMapRule) availableTargets(references []ref.Reference, query resolver.Query) (map[resolver.ResourceScope]map[string]struct{}, error) {

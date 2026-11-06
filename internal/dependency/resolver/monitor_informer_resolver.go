@@ -7,7 +7,6 @@ import (
 	"k8s.io/client-go/informers"
 	appsinformers "k8s.io/client-go/informers/apps/v1"
 	coreinformers "k8s.io/client-go/informers/core/v1"
-	discoveryinformers "k8s.io/client-go/informers/discovery/v1"
 	networkinginformers "k8s.io/client-go/informers/networking/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/cache"
@@ -23,11 +22,8 @@ type MonitorInformerResolver struct {
 	secrets         coreinformers.SecretInformer
 	pvcs            coreinformers.PersistentVolumeClaimInformer
 	services        coreinformers.ServiceInformer
-	serviceAccounts coreinformers.ServiceAccountInformer
-	nodes           coreinformers.NodeInformer
-	pvs             coreinformers.PersistentVolumeInformer
 	ingresses       networkinginformers.IngressInformer
-	endpointSlices  discoveryinformers.EndpointSliceInformer
+	networkPolicies networkinginformers.NetworkPolicyInformer
 	query           *ListerResolver
 	syncers         []cache.InformerSynced
 }
@@ -42,11 +38,8 @@ func NewMonitorInformerResolver(client kubernetes.Interface) *MonitorInformerRes
 	secrets := factory.Core().V1().Secrets()
 	pvcs := factory.Core().V1().PersistentVolumeClaims()
 	services := factory.Core().V1().Services()
-	serviceAccounts := factory.Core().V1().ServiceAccounts()
-	nodes := factory.Core().V1().Nodes()
-	pvs := factory.Core().V1().PersistentVolumes()
 	ingresses := factory.Networking().V1().Ingresses()
-	endpointSlices := factory.Discovery().V1().EndpointSlices()
+	networkPolicies := factory.Networking().V1().NetworkPolicies()
 	return &MonitorInformerResolver{
 		factory:         factory,
 		deployments:     deployments,
@@ -55,12 +48,9 @@ func NewMonitorInformerResolver(client kubernetes.Interface) *MonitorInformerRes
 		secrets:         secrets,
 		pvcs:            pvcs,
 		services:        services,
-		serviceAccounts: serviceAccounts,
-		nodes:           nodes,
-		pvs:             pvs,
 		ingresses:       ingresses,
-		endpointSlices:  endpointSlices,
-		query:           NewListerResolver(deployments.Lister(), pods.Lister(), configMaps.Lister(), secrets.Lister(), pvcs.Lister(), services.Lister(), serviceAccounts.Lister(), nodes.Lister(), pvs.Lister(), ingresses.Lister()),
+		networkPolicies: networkPolicies,
+		query:           NewListerResolver(deployments.Lister(), pods.Lister(), configMaps.Lister(), secrets.Lister(), pvcs.Lister(), services.Lister(), ingresses.Lister(), networkPolicies.Lister()),
 		syncers: []cache.InformerSynced{
 			deployments.Informer().HasSynced,
 			pods.Informer().HasSynced,
@@ -68,11 +58,8 @@ func NewMonitorInformerResolver(client kubernetes.Interface) *MonitorInformerRes
 			secrets.Informer().HasSynced,
 			pvcs.Informer().HasSynced,
 			services.Informer().HasSynced,
-			serviceAccounts.Informer().HasSynced,
-			nodes.Informer().HasSynced,
-			pvs.Informer().HasSynced,
 			ingresses.Informer().HasSynced,
-			endpointSlices.Informer().HasSynced,
+			networkPolicies.Informer().HasSynced,
 		},
 	}
 }
@@ -93,20 +80,10 @@ func (r *MonitorInformerResolver) PersistentVolumeClaims() coreinformers.Persist
 
 func (r *MonitorInformerResolver) Services() coreinformers.ServiceInformer { return r.services }
 
-func (r *MonitorInformerResolver) ServiceAccounts() coreinformers.ServiceAccountInformer {
-	return r.serviceAccounts
-}
-
-func (r *MonitorInformerResolver) Nodes() coreinformers.NodeInformer { return r.nodes }
-
-func (r *MonitorInformerResolver) PersistentVolumes() coreinformers.PersistentVolumeInformer {
-	return r.pvs
-}
-
 func (r *MonitorInformerResolver) Ingresses() networkinginformers.IngressInformer { return r.ingresses }
 
-func (r *MonitorInformerResolver) EndpointSlices() discoveryinformers.EndpointSliceInformer {
-	return r.endpointSlices
+func (r *MonitorInformerResolver) NetworkPolicies() networkinginformers.NetworkPolicyInformer {
+	return r.networkPolicies
 }
 
 // Start begins the owned informer factory and waits for every monitor cache.

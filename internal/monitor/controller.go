@@ -12,12 +12,10 @@ import (
 	"github.com/vincent/KubeDepGuard/internal/dependency/rules"
 	rulecatalog "github.com/vincent/KubeDepGuard/internal/dependency/rules/catalog"
 	corev1 "k8s.io/api/core/v1"
-	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	appsinformers "k8s.io/client-go/informers/apps/v1"
 	coreinformers "k8s.io/client-go/informers/core/v1"
-	discoveryinformers "k8s.io/client-go/informers/discovery/v1"
 	networkinginformers "k8s.io/client-go/informers/networking/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
@@ -25,18 +23,18 @@ import (
 )
 
 type Controller struct {
-	deployments    appsinformers.DeploymentInformer
-	ingresses      networkinginformers.IngressInformer
-	pods           coreinformers.PodInformer
-	services       coreinformers.ServiceInformer
-	configMaps     coreinformers.ConfigMapInformer
-	endpointSlices discoveryinformers.EndpointSliceInformer
-	queue          workqueue.TypedRateLimitingInterface[string]
-	recorder       record.EventRecorder
-	log            *slog.Logger
-	evaluator      *rules.Evaluator
-	ready          chan struct{}
-	readyOnce      sync.Once
+	deployments     appsinformers.DeploymentInformer
+	ingresses       networkinginformers.IngressInformer
+	networkPolicies networkinginformers.NetworkPolicyInformer
+	pods            coreinformers.PodInformer
+	services        coreinformers.ServiceInformer
+	configMaps      coreinformers.ConfigMapInformer
+	queue           workqueue.TypedRateLimitingInterface[string]
+	recorder        record.EventRecorder
+	log             *slog.Logger
+	evaluator       *rules.Evaluator
+	ready           chan struct{}
+	readyOnce       sync.Once
 }
 
 // New registers monitor event handlers on the resolver before it is started.
@@ -46,28 +44,22 @@ func New(informers *resolver.MonitorInformerResolver, recorder record.EventRecor
 	configMaps := informers.ConfigMaps()
 	secrets := informers.Secrets()
 	pvcs := informers.PersistentVolumeClaims()
-	endpointSlices := informers.EndpointSlices()
 	deployments := informers.Deployments()
 	ingresses := informers.Ingresses()
-	serviceAccounts := informers.ServiceAccounts()
-	nodes := informers.Nodes()
-	pvs := informers.PersistentVolumes()
-	c := &Controller{deployments: deployments, ingresses: ingresses, pods: pods, services: services, configMaps: configMaps, endpointSlices: endpointSlices, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()), recorder: recorder, log: log, evaluator: rules.NewEvaluator(informers, rulecatalog.DefaultRegistry.AdmissionRules()), ready: make(chan struct{})}
+	networkPolicies := informers.NetworkPolicies()
+	c := &Controller{deployments: deployments, ingresses: ingresses, networkPolicies: networkPolicies, pods: pods, services: services, configMaps: configMaps, queue: workqueue.NewTypedRateLimitingQueue(workqueue.DefaultTypedControllerRateLimiter[string]()), recorder: recorder, log: log, evaluator: rules.NewEvaluator(informers, rulecatalog.DefaultRegistry.AdmissionRules()), ready: make(chan struct{})}
 	deployments.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueue("deployment", obj) }, UpdateFunc: func(_, obj any) { c.enqueue("deployment", obj) }})
 	ingresses.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueue("ingress", obj) }, UpdateFunc: func(_, obj any) { c.enqueue("ingress", obj) }})
+	networkPolicies.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueue("networkpolicy", obj) }, UpdateFunc: func(_, obj any) { c.enqueue("networkpolicy", obj) }})
 	pods.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
-		AddFunc:    func(obj any) { c.enqueue("pod", obj); c.enqueueAllServices() },
-		UpdateFunc: func(_, obj any) { c.enqueue("pod", obj); c.enqueueAllServices() },
-		DeleteFunc: func(any) { c.enqueueAllServices() },
+		AddFunc:    func(obj any) { c.enqueue("pod", obj); c.enqueueAllServices(); c.enqueueAllNetworkPolicies() },
+		UpdateFunc: func(_, obj any) { c.enqueue("pod", obj); c.enqueueAllServices(); c.enqueueAllNetworkPolicies() },
+		DeleteFunc: func(any) { c.enqueueAllServices(); c.enqueueAllNetworkPolicies() },
 	})
 	services.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueue("service", obj); c.enqueueAllIngresses() }, UpdateFunc: func(_, obj any) { c.enqueue("service", obj); c.enqueueAllIngresses() }, DeleteFunc: func(obj any) { c.enqueue("service", obj); c.enqueueAllIngresses() }})
 	configMaps.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllDeployments() }})
-	secrets.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods() }, DeleteFunc: func(any) { c.enqueueAllPods() }})
+	secrets.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllDeployments() }})
 	pvcs.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllDeployments() }})
-	serviceAccounts.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }})
-	nodes.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods() }, DeleteFunc: func(any) { c.enqueueAllPods() }})
-	pvs.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, UpdateFunc: func(_, _ any) { c.enqueueAllPods(); c.enqueueAllDeployments() }, DeleteFunc: func(any) { c.enqueueAllPods(); c.enqueueAllDeployments() }})
-	endpointSlices.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{AddFunc: func(obj any) { c.enqueueEndpointService(obj) }, UpdateFunc: func(_, obj any) { c.enqueueEndpointService(obj) }, DeleteFunc: func(obj any) { c.enqueueEndpointService(obj) }})
 	return c
 }
 
@@ -157,6 +149,18 @@ func (c *Controller) reconcile(key string) error {
 		for _, violation := range result.Violations {
 			c.warn(ingress, violation)
 		}
+	case "networkpolicy":
+		policy, err := c.networkPolicies.Lister().NetworkPolicies(namespace).Get(name)
+		if err != nil {
+			return nil
+		}
+		result, err := c.evaluator.Evaluate(rules.Request{Resource: "networkpolicies", Operation: rules.Update, Namespace: namespace, Name: name, Object: policy})
+		if err != nil {
+			return err
+		}
+		for _, violation := range result.Violations {
+			c.warn(policy, violation)
+		}
 	case "service":
 		svc, err := c.services.Lister().Services(namespace).Get(name)
 		if err != nil {
@@ -169,25 +173,8 @@ func (c *Controller) reconcile(key string) error {
 		for _, violation := range result.Violations {
 			c.warn(svc, violation)
 		}
-		slices, _ := c.endpointSlices.Lister().EndpointSlices(namespace).List(labels.Everything())
-		if len(svc.Spec.Selector) > 0 && !hasReadyEndpoint(svc, slices) {
-			c.warn(svc, dependency.Violation{"NoReadyEndpoint", namespace + "/" + name, "has no ready EndpointSlice endpoint"})
-		}
 	}
 	return nil
-}
-
-func hasReadyEndpoint(service *corev1.Service, slices []*discoveryv1.EndpointSlice) bool {
-	for _, slice := range slices {
-		if slice.Labels[discoveryv1.LabelServiceName] == service.Name {
-			for _, endpoint := range slice.Endpoints {
-				if endpoint.Conditions.Ready != nil && *endpoint.Conditions.Ready {
-					return true
-				}
-			}
-		}
-	}
-	return false
 }
 
 func (c *Controller) warn(object runtime.Object, v dependency.Violation) {
@@ -220,25 +207,23 @@ func (c *Controller) enqueueAllIngresses() {
 	}
 }
 
-// enqueueReferencingPods rechecks Pods when a target is created or updated.
+func (c *Controller) enqueueAllNetworkPolicies() {
+	policies, _ := c.networkPolicies.Lister().List(labels.Everything())
+	for _, policy := range policies {
+		c.enqueue("networkpolicy", policy)
+	}
+}
+
 func (c *Controller) enqueueAllPods() {
 	pods, _ := c.pods.Lister().List(labels.Everything())
 	for _, pod := range pods {
 		c.enqueue("pod", pod)
 	}
 }
-func (c *Controller) enqueueEndpointService(obj any) {
-	slice, ok := obj.(*discoveryv1.EndpointSlice)
-	if !ok {
-		return
-	}
-	name := slice.Labels[discoveryv1.LabelServiceName]
-	if name != "" {
-		c.queue.Add("service:" + slice.Namespace + "/" + name)
-	}
-}
 func (c *Controller) fullReconcile() {
 	c.enqueueAllPods()
 	c.enqueueAllDeployments()
 	c.enqueueAllServices()
+	c.enqueueAllIngresses()
+	c.enqueueAllNetworkPolicies()
 }

@@ -98,6 +98,12 @@ func newRuleRequest(req *admissionv1.AdmissionRequest) (rules.Request, error) {
 			return rules.Request{}, fmt.Errorf("decode Ingress: %w", err)
 		}
 		request.Object = ingress
+	case "networkpolicies":
+		policy := &networkingv1.NetworkPolicy{}
+		if err := json.Unmarshal(req.Object.Raw, policy); err != nil {
+			return rules.Request{}, fmt.Errorf("decode NetworkPolicy: %w", err)
+		}
+		request.Object = policy
 	}
 	return request, nil
 }

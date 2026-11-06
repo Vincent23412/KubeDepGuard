@@ -44,8 +44,12 @@ func deploymentWithPVC(name, claim string) *appsv1.Deployment {
 	return &appsv1.Deployment{ObjectMeta: enforceMeta(name), Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app"}}, Volumes: []corev1.Volume{{Name: "data", VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claim}}}}}}}}
 }
 
-func podWithSecret(name, secret string, labels map[string]string) *corev1.Pod {
-	pod := &corev1.Pod{ObjectMeta: enforceMeta(name), Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: secret}}}}}}}}
+func deploymentWithSecret(name, secret string) *appsv1.Deployment {
+	return &appsv1.Deployment{ObjectMeta: enforceMeta(name), Spec: appsv1.DeploymentSpec{Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "app", EnvFrom: []corev1.EnvFromSource{{SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: secret}}}}}}}}}}
+}
+
+func podWithLabels(name string, labels map[string]string) *corev1.Pod {
+	pod := &corev1.Pod{ObjectMeta: enforceMeta(name)}
 	pod.Labels = labels
 	return pod
 }
@@ -56,6 +60,10 @@ func ingressWithService(name, service string, port int32) *networkingv1.Ingress 
 
 func serviceWithSelector(name string) *corev1.Service {
 	return &corev1.Service{ObjectMeta: enforceMeta(name), Spec: corev1.ServiceSpec{Selector: map[string]string{"app": "api"}}}
+}
+
+func networkPolicyWithSelector(name string) *networkingv1.NetworkPolicy {
+	return &networkingv1.NetworkPolicy{ObjectMeta: enforceMeta(name), Spec: networkingv1.NetworkPolicySpec{PodSelector: metav1.LabelSelector{MatchLabels: map[string]string{"app": "api"}}}}
 }
 
 func scope(kind string) resolver.ResourceScope {
@@ -80,21 +88,21 @@ func TestFormalDeploymentConfigMapCases(t *testing.T) {
 	})
 }
 
-func TestFormalPodSecretCases(t *testing.T) {
-	source := podWithSecret("consumer", "credentials", nil)
+func TestFormalDeploymentSecretCases(t *testing.T) {
+	source := deploymentWithSecret("consumer", "credentials")
 	target := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "credentials", Namespace: formalNamespace}}
 
 	t.Run("source normal", func(t *testing.T) {
-		evaluateFormal(t, resourcesByScope{scope("Secret"): {target}}, rules.Request{Resource: "pods", Operation: rules.Create, Namespace: formalNamespace, Name: source.Name, Object: source}, false)
+		evaluateFormal(t, resourcesByScope{scope("Secret"): {target}}, rules.Request{Resource: "deployments", Operation: rules.Create, Namespace: formalNamespace, Name: source.Name, Object: source}, false)
 	})
 	t.Run("source conflict", func(t *testing.T) {
-		evaluateFormal(t, resourcesByScope{}, rules.Request{Resource: "pods", Operation: rules.Create, Namespace: formalNamespace, Name: source.Name, Object: source}, true)
+		evaluateFormal(t, resourcesByScope{}, rules.Request{Resource: "deployments", Operation: rules.Create, Namespace: formalNamespace, Name: source.Name, Object: source}, true)
 	})
 	t.Run("target normal", func(t *testing.T) {
 		evaluateFormal(t, resourcesByScope{}, rules.Request{Resource: "secrets", Operation: rules.Delete, Namespace: formalNamespace, Name: "unused"}, false)
 	})
 	t.Run("target conflict", func(t *testing.T) {
-		evaluateFormal(t, resourcesByScope{scope("Pod"): {source}}, rules.Request{Resource: "secrets", Operation: rules.Delete, Namespace: formalNamespace, Name: target.Name}, true)
+		evaluateFormal(t, resourcesByScope{scope("Deployment"): {source}}, rules.Request{Resource: "secrets", Operation: rules.Delete, Namespace: formalNamespace, Name: target.Name}, true)
 	})
 }
 
@@ -141,8 +149,8 @@ func TestFormalIngressServiceCases(t *testing.T) {
 
 func TestFormalServicePodCases(t *testing.T) {
 	source := serviceWithSelector("api")
-	matching := podWithSecret("api-0", "", map[string]string{"app": "api"})
-	other := podWithSecret("api-1", "", map[string]string{"app": "api"})
+	matching := podWithLabels("api-0", map[string]string{"app": "api"})
+	other := podWithLabels("api-1", map[string]string{"app": "api"})
 
 	t.Run("source normal", func(t *testing.T) {
 		evaluateFormal(t, resourcesByScope{scope("Pod"): {matching}}, rules.Request{Resource: "services", Operation: rules.Create, Namespace: formalNamespace, Name: source.Name, Object: source}, false)
@@ -160,5 +168,29 @@ func TestFormalServicePodCases(t *testing.T) {
 		updated := matching.DeepCopy()
 		updated.Labels = map[string]string{"app": "other"}
 		evaluateFormal(t, resourcesByScope{scope("Pod"): {matching}, scope("Service"): {source}}, rules.Request{Resource: "pods", Operation: rules.Update, Namespace: formalNamespace, Name: matching.Name, Object: updated}, true)
+	})
+}
+
+func TestFormalNetworkPolicyPodCases(t *testing.T) {
+	source := networkPolicyWithSelector("protect-api")
+	matching := podWithLabels("api-0", map[string]string{"app": "api"})
+	other := podWithLabels("api-1", map[string]string{"app": "api"})
+
+	t.Run("source normal", func(t *testing.T) {
+		evaluateFormal(t, resourcesByScope{scope("Pod"): {matching}}, rules.Request{Resource: "networkpolicies", Operation: rules.Create, Namespace: formalNamespace, Name: source.Name, Object: source}, false)
+	})
+	t.Run("source conflict", func(t *testing.T) {
+		evaluateFormal(t, resourcesByScope{}, rules.Request{Resource: "networkpolicies", Operation: rules.Create, Namespace: formalNamespace, Name: source.Name, Object: source}, true)
+	})
+	t.Run("target normal", func(t *testing.T) {
+		evaluateFormal(t, resourcesByScope{scope("Pod"): {matching, other}, scope("NetworkPolicy"): {source}}, rules.Request{Resource: "pods", Operation: rules.Delete, Namespace: formalNamespace, Name: matching.Name}, false)
+	})
+	t.Run("target conflict", func(t *testing.T) {
+		evaluateFormal(t, resourcesByScope{scope("Pod"): {matching}, scope("NetworkPolicy"): {source}}, rules.Request{Resource: "pods", Operation: rules.Delete, Namespace: formalNamespace, Name: matching.Name}, true)
+	})
+	t.Run("target label update conflict", func(t *testing.T) {
+		updated := matching.DeepCopy()
+		updated.Labels = map[string]string{"app": "other"}
+		evaluateFormal(t, resourcesByScope{scope("Pod"): {matching}, scope("NetworkPolicy"): {source}}, rules.Request{Resource: "pods", Operation: rules.Update, Namespace: formalNamespace, Name: matching.Name, Object: updated}, true)
 	})
 }

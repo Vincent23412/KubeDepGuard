@@ -13,4 +13,5 @@ var DefaultRegistry = rules.NewRegistry(
 	direct.NewWorkloadPersistentVolumeClaimRule(),
 	conditional.NewIngressServiceRule(),
 	conditional.NewServicePodRule(),
+	conditional.NewNetworkPolicyPodRule(),
 )
