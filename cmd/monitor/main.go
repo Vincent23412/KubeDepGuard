@@ -12,7 +12,9 @@ import (
 	"github.com/vincent/KubeDepGuard/internal/dependency/resolver"
 	"github.com/vincent/KubeDepGuard/internal/kube"
 	"github.com/vincent/KubeDepGuard/internal/monitor"
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/tools/record"
@@ -57,6 +59,8 @@ func main() {
 func scheme() *runtime.Scheme {
 	s := runtime.NewScheme()
 	_ = corev1.AddToScheme(s)
+	_ = appsv1.AddToScheme(s)
+	_ = networkingv1.AddToScheme(s)
 	return s
 }
 
